@@ -171,12 +171,13 @@ resource auditTable 'Microsoft.OperationalInsights/workspaces/tables@2025-07-01'
 }
 
 // Written twice, same as the two above: once as the table schema, once as the DCR stream the history
-// import posts to. Two orderings of one list rather than two lists, because what-if compares a
-// column array by position: a re-ordered copy of the same columns reads as a dozen renames. Each
-// list keeps the order its own API returns — `TimeGenerated` first in the stream, last in the table.
-var timeGeneratedColumn = { name: 'TimeGenerated', type: 'datetime' }
-
-var dailyRollupColumns = [
+// import posts to.
+//
+// The summary rule adds four `_`-prefixed columns to this table that the tables API refuses in a
+// PUT (MSG 1008, invalid characters), so what-if reports them as a delete on every run; the
+// deployment leaves them in place and the rule keeps writing (observed 2026-09-06 on test).
+var dailyColumns = [
+  { name: 'TimeGenerated', type: 'datetime' }
   { name: 'Day', type: 'datetime' }
   { name: 'SourceApp', type: 'string' }
   { name: 'EventName', type: 'string' }
@@ -191,24 +192,6 @@ var dailyRollupColumns = [
   { name: 'Sessions', type: 'long' }
   { name: 'Users', type: 'long' }
 ]
-
-var dailyStreamColumns = concat([ timeGeneratedColumn ], dailyRollupColumns)
-
-// Four columns the summary rule adds to its own destination table, declared here because the tables
-// API replaces the column list on every PUT — "to delete a custom column, send the same PUT request
-// but omit the column from the columns array" — so leaving them out asks every deployment to delete
-// them out from under the rule.
-//
-// Table only, never the DCR stream: nothing outside the rule writes them, and a stream declaration is
-// a contract with the history import, which posts the columns above and no others.
-var summaryRuleColumns = [
-  { name: '_BinSize', type: 'long' }
-  { name: '_BinStartTime', type: 'datetime' }
-  { name: '_RuleLastModifiedTime', type: 'datetime' }
-  { name: '_RuleName', type: 'string' }
-]
-
-var dailyTableColumns = concat(summaryRuleColumns, dailyRollupColumns, [ timeGeneratedColumn ])
 
 // The rollup destination is declared rather than left to the summary rule.
 //
@@ -229,7 +212,7 @@ resource dailyTable 'Microsoft.OperationalInsights/workspaces/tables@2025-07-01'
     totalRetentionInDays: dailyRetentionDays
     schema: {
       name: dailyTableName
-      columns: dailyTableColumns
+      columns: dailyColumns
     }
   }
 }
@@ -255,7 +238,7 @@ resource dcr 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
       // scripts/import-penguin-history.js, which posts historical rollup rows through the ingestion
       // API — the only way into the table from outside the workspace.
       'Custom-${dailyTableName}': {
-        columns: dailyStreamColumns
+        columns: dailyColumns
       }
     }
     destinations: {
@@ -342,8 +325,7 @@ resource readerAssignments 'Microsoft.Authorization/roleAssignments@2022-04-01' 
 // the column, and at binSize 1440 the day bin and the rule's own bin coincide.
 //
 // `isActive` is absent because it cannot be set: it is read-only on this type (bicep BCP073), so the
-// what-if line proposing its removal is one ARM does not act on. The live rule stayed active across
-// a deployment of this template, and kept writing rollups afterwards.
+// what-if line proposing its removal is one ARM does not act on.
 resource eventsDailyRollup 'Microsoft.OperationalInsights/workspaces/summaryLogs@2025-07-01' = {
   parent: workspace
   name: 'eagle-events-daily'
