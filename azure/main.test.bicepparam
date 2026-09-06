@@ -41,6 +41,7 @@ param allowedOrigins = [
   'https://eagle-public-test-dbg8ghh8gjd0bscx.a02.azurefd.net'
   'https://demi-admin-test-hbf7cfh7ggfhf4gf.a02.azurefd.net'
   'https://eagle-test.apps.silver.devops.gov.bc.ca'
+  'https://test.projects.eao.gov.bc.ca'
   'http://localhost:4200'
 ]
 
