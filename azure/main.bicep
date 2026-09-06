@@ -68,9 +68,11 @@ param budgetStartDate string = ''
 @description('Email addresses for budget and alert notifications. Sourced from the environment by the param files — never a literal, this repository is public.')
 param contactEmails array
 
+var applicationTagKey = 'Application'
+
 var defaultTags = {
   Project: 'EPIC Analytics'
-  Application: 'eagle-analytics'
+  '${applicationTagKey}': 'eagle-analytics'
   Environment: environmentName
   ManagedBy: 'Bicep'
   CostCenter: 'c4b0a8'
@@ -186,6 +188,8 @@ module costBudget './modules/cost-budget.bicep' = {
     budgetAmount: budgetAmount
     contactEmails: contactEmails
     startDate: budgetStartDate
+    applicationTagKey: applicationTagKey
+    applicationTagValue: defaultTags[applicationTagKey]
   }
 }
 

@@ -32,6 +32,10 @@ step wrote.
 Point the client at both: eagle-public and eagle-admin keep sending to penguin and also send to
 `/analytics/events`. Nothing is switched off yet.
 
+Since eao-nginx v2.7.32 (2026-09-06), the browser-facing prefix is `/api/usage/`; rproxy rewrites it
+to `/analytics/` for the gateway, because ad blockers refuse paths containing "analytics". Config
+`EAGLE_ANALYTICS_URL` is `/api/usage` on test.
+
 ## 3. Compare the counts
 
 In penguin:

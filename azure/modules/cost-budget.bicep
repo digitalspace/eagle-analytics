@@ -20,6 +20,12 @@ param budgetAmount int = 60
 @description('Email addresses to receive budget threshold alerts. Passed in, never defaulted: an address in a public repository is a spam target.')
 param contactEmails array
 
+@description('Tag key and value every resource in this estate carries. main.bicep passes both from the same defaultTags entry, so the filter key and the tags cannot drift apart.')
+@minLength(1)
+param applicationTagKey string
+@minLength(1)
+param applicationTagValue string
+
 // utcNow() is only legal as a parameter default in Bicep, which is the shape wanted here: evaluated
 // once at deployment, never drifting on a redeploy of an unchanged template.
 @description('First day of the budget period. Defaults to the first of the current month for a NEW budget; an existing budget REJECTS any startDate change, so param files pin the live value.')
@@ -35,6 +41,18 @@ resource costBudget 'Microsoft.Consumption/budgets@2021-10-01' = {
     timeGrain: 'Monthly'
     timePeriod: {
       startDate: '${effectiveStartDate}T00:00:00Z'
+    }
+    // A budget with no filter measures the WHOLE resource group, and both groups are shared: test
+    // sits with eagle-demi (about 150 CAD/month on its own), prod with the eagle-public estate. That
+    // is what fired all three thresholds on 2026-09-06 without analytics spending anything near 60.
+    // Every billable resource here is stamped by main.bicep's defaultTags and its usage records
+    // carry the tag; `In` is the only operator a budget filter accepts.
+    filter: {
+      tags: {
+        name: applicationTagKey
+        operator: 'In'
+        values: [applicationTagValue]
+      }
     }
     notifications: {
       Actual_80_Percent: {
