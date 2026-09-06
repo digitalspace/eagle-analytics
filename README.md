@@ -151,7 +151,7 @@ credential, with no client secret anywhere.
 |---|---|
 | Federated credential | issuer `https://token.actions.githubusercontent.com`, subject `repo:digitalspace/eagle-analytics:environment:<env>`, audience `api://AzureADTokenExchange` |
 | RBAC | Website Contributor on `analytics-api-fc-<env>` **individually**, plus Storage Blob Data Contributor and Storage Account Contributor on the Function's storage account. Nothing at resource-group scope |
-| Config | Secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `MAXMIND_LICENSE_KEY`; variables `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`. All on the GitHub environment, nothing at repository scope |
+| Config | Secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `MAXMIND_LICENSE_KEY`; variables `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, `AZURE_STORAGE_ACCOUNT`. All on the GitHub environment, nothing at repository scope |
 
 The template cannot make those assignments — it does not know the CI identity — so they are granted
 by hand after the first `./scripts/deploy-infra.sh <env> --live`, once the app and the account exist.
@@ -163,8 +163,9 @@ before renaming, prove a deploy green, and only then remove the old one.
 
 `.github/workflows/refresh-geoip.yaml` authenticates as the same identity and uploads to the `geoip`
 container on that same storage account, so those two storage roles cover it as well. It needs
-`MAXMIND_LICENSE_KEY` on the environment. If the account lookup by resource group is refused, the
-script also takes `--account <name>`.
+`MAXMIND_LICENSE_KEY` and `AZURE_STORAGE_ACCOUNT` on the environment: the account is named rather
+than looked up by resource group, because the identity holds nothing at that scope and the name
+carries a uniqueString suffix.
 
 The template grants the DEMI identity two things on this estate: publish on the analytics DCR, so
 eagle-demi writes audit rows into the same pipeline, and Log Analytics Reader on

@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Bicep deployment for the eagle-analytics estate. Run by hand from an operator login, never from
-# CI: the CI identity cannot be granted Contributor on the group. See README "Deploy".
+# Bicep deployment for the eagle-analytics estate. Run by hand, never from CI: README "Deploy".
 
 usage() {
   cat <<'EOF'
@@ -96,9 +95,6 @@ STATE="$(az deployment group create -g "$RESOURCE_GROUP" --subscription "$SUBSCR
   -f "${REPO_ROOT}/azure/main.bicep" -p "$PARAM_FILE" \
   -n "$NAME" --only-show-errors --query "properties.provisioningState" -o tsv)"
 echo "$STATE"
-if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-  echo "\`${NAME}\` (${ENVIRONMENT}): ${STATE}" >> "$GITHUB_STEP_SUMMARY"
-fi
 [ "$STATE" = 'Succeeded' ] || exit 1
 
 echo -e "${GREEN}✓ done. Copy eventsDcrEndpoint and eventsDcrImmutableId from the deployment outputs${NC}"

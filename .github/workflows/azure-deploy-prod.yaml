@@ -1,9 +1,7 @@
 # Deploy the analytics API to production from a released tag, dispatch only. There is no `push:`
 # trigger here and there must never be one: production deploys from a tag verified on staging.
 #
-# Application only: the CI identity holds Website Contributor on that one app, so it cannot run an
-# ARM deployment. The estate is deployed by hand with `scripts/deploy-infra.sh`, from an operator
-# login, before the tag ships. Details: README "Deploy".
+# Application only; the estate deploys by hand before the tag ships — README "Deploy".
 
 name: Deploy analytics to Azure production
 
@@ -31,9 +29,7 @@ jobs:
     name: Build & Deploy API (Azure Function App)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Declaring an environment CHANGES THE OIDC SUBJECT CLAIM to
-    # `repo:digitalspace/eagle-analytics:environment:prod`; only a federated credential registered
-    # for that subject on analytics-cicd-prod matches it. It also carries the approval gate.
+    # Environment sets the OIDC subject claim (azure-deploy-staging-api.yaml) and the approval gate.
     environment: prod
     env:
       AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}

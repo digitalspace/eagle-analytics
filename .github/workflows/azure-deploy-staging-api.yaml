@@ -1,6 +1,5 @@
-# Deploy the analytics API to the staging Flex Consumption app. Application only: the CI identity
-# holds Website Contributor on that one app, so it cannot run an ARM deployment. The estate is
-# deployed by hand with `scripts/deploy-infra.sh`, from an operator login. Details: README "Deploy".
+# Deploy the analytics API to the staging Flex Consumption app. Application only; the estate deploys
+# by hand with `scripts/deploy-infra.sh` — README "Deploy".
 
 name: Deploy analytics to Azure staging
 
