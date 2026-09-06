@@ -1,5 +1,9 @@
-# Deploy analytics to production from a released tag, dispatch only. There is no `push:` trigger here
-# and there must never be one: production deploys from a tag verified on staging.
+# Deploy the analytics API to production from a released tag, dispatch only. There is no `push:`
+# trigger here and there must never be one: production deploys from a tag verified on staging.
+#
+# Application only: the CI identity holds Website Contributor on that one app, so it cannot run an
+# ARM deployment. The estate is deployed by hand with `scripts/deploy-infra.sh`, from an operator
+# login, before the tag ships. Details: README "Deploy".
 
 name: Deploy analytics to Azure production
 
@@ -23,11 +27,16 @@ env:
   API_FLEX_APP_NAME: analytics-api-fc-prod
 
 jobs:
-  deploy-infra:
-    name: Deploy infrastructure (Bicep)
+  deploy-api:
+    name: Build & Deploy API (Azure Function App)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Declaring an environment CHANGES THE OIDC SUBJECT CLAIM to
+    # `repo:digitalspace/eagle-analytics:environment:prod`; only a federated credential registered
+    # for that subject on analytics-cicd-prod matches it. It also carries the approval gate.
     environment: prod
+    env:
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
     steps:
       # Format first, because it decides what gets checked out below.
       - name: Validate version format
@@ -43,44 +52,8 @@ jobs:
           fi
 
       # `ref:` is the whole point: without it the checkout is the branch the dispatch was fired from
-      # and the job ships main while claiming to deploy a tag.
-      - name: Checkout the tag
-        uses: actions/checkout@v7
-        with:
-          ref: refs/tags/${{ inputs.version }}
-          fetch-depth: 0
-
-      - name: Azure Login
-        uses: azure/login@v3
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-
-      # CONFIRM_PROD is the script's own guard against an accidental live prod deploy; here the
-      # environment approval is what makes it deliberate. WHATIF_BEFORE_LIVE prints the diff into
-      # the same log first, because this resource group also holds the eagle-public prod estate.
-      - name: Deploy the estate
-        env:
-          APIM_SHARED_HEADER_VALUE: ${{ secrets.APIM_SHARED_HEADER_VALUE }}
-          AUDIT_SHARED_HEADER_VALUE: ${{ secrets.AUDIT_SHARED_HEADER_VALUE }}
-          FRONT_DOOR_ID: ${{ secrets.FRONT_DOOR_ID }}
-          BUDGET_CONTACT_EMAIL: ${{ vars.BUDGET_CONTACT_EMAIL }}
-          CONFIRM_PROD: 'yes'
-          WHATIF_BEFORE_LIVE: '1'
-        run: ./scripts/deploy-infra.sh prod --live
-
-  deploy-api:
-    name: Build & Deploy API (Azure Function App)
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    # Ordered, not concurrent: the app reads settings the template writes.
-    needs: deploy-infra
-    environment: prod
-    env:
-      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
-    steps:
-      # No version check here: `needs: deploy-infra` already failed the run on a bad input.
+      # and the job ships main while claiming to deploy a tag. Depth 0 because BUILD_ID comes from
+      # `git describe --tags`.
       - name: Checkout the tag
         uses: actions/checkout@v7
         with:
@@ -98,6 +71,7 @@ jobs:
           node-version: '22'
           cache: 'yarn'
 
+      # Dependencies only. Packaging belongs to `scripts/package-api.py`.
       - name: Install dependencies
         run: yarn install --immutable
 
@@ -113,6 +87,8 @@ jobs:
       - name: Drop dev dependencies from the package
         run: yarn workspaces focus --production
 
+      # `config-zip`: a Flex app has no Kudu wwwroot to POST a zip into — it publishes to the
+      # deployment blob container.
       - name: Deploy the API to the Flex app
         run: |
           set -euo pipefail
@@ -134,4 +110,4 @@ jobs:
         if: failure()
         run: |
           echo "### Production API deployment failed" >> "$GITHUB_STEP_SUMMARY"
-          echo "Check the step logs above. The estate deploy in the previous job already ran." >> "$GITHUB_STEP_SUMMARY"
+          echo "Check the step logs above. The app keeps serving its previous package unless config-zip itself succeeded." >> "$GITHUB_STEP_SUMMARY"

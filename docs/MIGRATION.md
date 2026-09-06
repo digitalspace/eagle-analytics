@@ -15,8 +15,9 @@ export APIM_SHARED_HEADER_VALUE='…'   # same value as the APIM policy
 ```
 
 Copy `eventsDcrEndpoint` and `eventsDcrImmutableId` out of the deployment outputs. A Direct rule's
-endpoint is assigned at create time and cannot be composed from the name. The staging workflow does
-the same two steps on every push to `main`.
+endpoint is assigned at create time and cannot be composed from the name. Run this by hand from an
+operator login: CI deploys the application only. Every later push to `main` publishes the Function
+onto the settings this step wrote.
 
 ## 2. Dual-write on test for one week
 
