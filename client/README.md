@@ -17,7 +17,7 @@ npmScopes:
   digitalspace:
     npmRegistryServer: "https://npm.pkg.github.com"
     npmAlwaysAuth: true
-    npmAuthToken: "${GH_PACKAGES_TOKEN}"
+    npmAuthToken: "${GH_PACKAGES_TOKEN:-}"
 ```
 
 An npm or Yarn 1 consumer uses `.npmrc` instead:
