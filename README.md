@@ -18,7 +18,7 @@ the API under the prefix while the Function host serves it at the root.
 |---|---|---|
 | `GET /health` | none | nothing in, `200 {status, env}` out |
 | `POST /events` | APIM shared header | `{ "events": [...] }`, at most 50. `202 {accepted, dropped, rejected}`, or `429` past the per-address cap |
-| `POST /audit` | APIM shared header, `X-Analytics-Audit`, keyed APIM product | `{ "rows": [...] }`, at most 50. `202 {accepted, dropped, rejected}` |
+| `POST /audit` | APIM shared header, `X-Analytics-Audit`, keyed APIM product | `{ "rows": [...] }`, at most 50. `202 {accepted, rejected}` |
 | `POST /query` | APIM shared header, staff bearer token | a builder request. `200 {rows}`, plus `kql` for a sysadmin on `?debug=1` |
 | `GET /query/schema` | APIM shared header, staff bearer token | nothing in, `200` with the measures, dimensions and operators the builder may offer |
 | `GET /dashboards` | APIM shared header, staff bearer token | nothing in, `200 {dashboards}` — own, plus what others shared |
