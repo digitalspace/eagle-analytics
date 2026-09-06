@@ -1,0 +1,137 @@
+# Deploy analytics to production from a released tag, dispatch only. There is no `push:` trigger here
+# and there must never be one: production deploys from a tag verified on staging.
+
+name: Deploy analytics to Azure production
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Tag to deploy (e.g. v1.2.3). Pick the one verified on staging.'
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-azure-prod
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  API_FLEX_APP_NAME: analytics-api-fc-prod
+
+jobs:
+  deploy-infra:
+    name: Deploy infrastructure (Bicep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: prod
+    steps:
+      # Format first, because it decides what gets checked out below.
+      - name: Validate version format
+        # Through the environment, never interpolated into the script body: `${{ inputs.version }}`
+        # is substituted before bash starts, so the regex would check a string already run as shell.
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          VERSION="$INPUT_VERSION"
+          if [[ ! $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Version must be in the format v1.2.3, got '$VERSION'"
+            exit 1
+          fi
+
+      # `ref:` is the whole point: without it the checkout is the branch the dispatch was fired from
+      # and the job ships main while claiming to deploy a tag.
+      - name: Checkout the tag
+        uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.version }}
+          fetch-depth: 0
+
+      - name: Azure Login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # CONFIRM_PROD is the script's own guard against an accidental live prod deploy; here the
+      # environment approval is what makes it deliberate. WHATIF_BEFORE_LIVE prints the diff into
+      # the same log first, because this resource group also holds the eagle-public prod estate.
+      - name: Deploy the estate
+        env:
+          APIM_SHARED_HEADER_VALUE: ${{ secrets.APIM_SHARED_HEADER_VALUE }}
+          AUDIT_SHARED_HEADER_VALUE: ${{ secrets.AUDIT_SHARED_HEADER_VALUE }}
+          FRONT_DOOR_ID: ${{ secrets.FRONT_DOOR_ID }}
+          BUDGET_CONTACT_EMAIL: ${{ vars.BUDGET_CONTACT_EMAIL }}
+          CONFIRM_PROD: 'yes'
+          WHATIF_BEFORE_LIVE: '1'
+        run: ./scripts/deploy-infra.sh prod --live
+
+  deploy-api:
+    name: Build & Deploy API (Azure Function App)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Ordered, not concurrent: the app reads settings the template writes.
+    needs: deploy-infra
+    environment: prod
+    env:
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+    steps:
+      # No version check here: `needs: deploy-infra` already failed the run on a bad input.
+      - name: Checkout the tag
+        uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.version }}
+          fetch-depth: 0
+
+      # Before setup-node: its Yarn 4 cache detection reads the corepack shim (actions/setup-node#1027).
+      - name: Enable Corepack
+        run: corepack enable
+
+      # 22, the Flex host's runtime (azure/modules/api-function-flex.bicep).
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Azure Login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # Dev dependencies are most of the package's file count, and the Flex extract phase is paid
+      # per file. Nothing after this step needs them.
+      - name: Drop dev dependencies from the package
+        run: yarn workspaces focus --production
+
+      - name: Deploy the API to the Flex app
+        run: |
+          set -euo pipefail
+          export BUILD_ID="$(git describe --tags --always --dirty)-$(date -u +%H%M%S)"
+          python3 scripts/package-api.py . /tmp/api-flex.zip
+          az functionapp deployment source config-zip \
+            -g "$AZURE_RESOURCE_GROUP" \
+            -n "$API_FLEX_APP_NAME" \
+            --src /tmp/api-flex.zip
+
+      # Deployed is not the same fact as serving. Retries cover the cold start after a publish.
+      - name: Smoke test the deployed API
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 10 --retry-delay 10 --retry-all-errors \
+            "https://${API_FLEX_APP_NAME}.azurewebsites.net/health"
+
+      - name: Report failure to the job summary
+        if: failure()
+        run: |
+          echo "### Production API deployment failed" >> "$GITHUB_STEP_SUMMARY"
+          echo "Check the step logs above. The estate deploy in the previous job already ran." >> "$GITHUB_STEP_SUMMARY"

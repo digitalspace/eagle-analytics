@@ -1,0 +1,37 @@
+# Dependencies
+node_modules
+
+# Environment and local Functions settings (hold connection strings)
+.env
+.env.local
+.env.*.local
+local.settings.json
+
+# Build output
+dist/
+
+# MaxMind GeoLite2 databases, downloaded at runtime from the geoip container
+*.mmdb
+
+# Local instruction files, not for review
+CLAUDE.md
+.github/instructions/
+.github/antigravity.md
+
+# Local tool state. .claude/worktrees/ holds whole checkouts of this repo.
+.claude/
+
+# Editor
+.vscode/settings.json
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Yarn 4 project: yarn.lock is the source of truth
+package-lock.json
+**/.yarn/install-state.gz
+
+# Compiled Bicep
+azure/main.json

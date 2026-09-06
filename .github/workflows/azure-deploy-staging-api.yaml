@@ -1,0 +1,135 @@
+# Deploy the analytics estate and API to staging on every push to main. Infrastructure first, then
+# the application: the app boots on settings the template writes (EVENTS_DCR_ENDPOINT and the rest),
+# so a code deploy onto stale settings starts a Function that cannot write.
+
+name: Deploy analytics to Azure staging
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      # The application half mirrors `scripts/package-api.py`; the infrastructure half is what
+      # `scripts/deploy-infra.sh` reads.
+      - 'index.js'
+      - 'host.json'
+      - 'package.json'
+      - 'yarn.lock'
+      - 'src/**'
+      - 'azure/**'
+      - 'scripts/deploy-infra.sh'
+      - 'scripts/package-api.py'
+      - '.github/workflows/azure-deploy-staging-api.yaml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-azure-staging
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  API_FLEX_APP_NAME: analytics-api-fc-test
+
+jobs:
+  deploy-infra:
+    name: Deploy infrastructure (Bicep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Declaring an environment CHANGES THE OIDC SUBJECT CLAIM to
+    # `repo:digitalspace/eagle-analytics:environment:test`; only a federated credential registered
+    # for that subject on analytics-cicd-test matches it.
+    environment: test
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Azure Login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # The script holds the subscription and resource group per environment, so nothing here
+      # repeats them. The header values travel through the environment: app settings are a
+      # whole-collection PUT, and an unset one would blank the live setting rather than leave it.
+      - name: Deploy the estate
+        env:
+          APIM_SHARED_HEADER_VALUE: ${{ secrets.APIM_SHARED_HEADER_VALUE }}
+          AUDIT_SHARED_HEADER_VALUE: ${{ secrets.AUDIT_SHARED_HEADER_VALUE }}
+          FRONT_DOOR_ID: ${{ secrets.FRONT_DOOR_ID }}
+          BUDGET_CONTACT_EMAIL: ${{ vars.BUDGET_CONTACT_EMAIL }}
+        run: ./scripts/deploy-infra.sh test --live
+
+  deploy-api:
+    name: Build & Deploy API (Azure Function App)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: deploy-infra
+    environment: test
+    env:
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+    steps:
+      - name: Checkout repository
+        # Depth 0 because BUILD_ID comes from `git describe --tags`: at depth 1 the tag refs arrive
+        # with no ancestry path from HEAD and describe fails.
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Before setup-node: its Yarn 4 cache detection reads the corepack shim (actions/setup-node#1027).
+      - name: Enable Corepack
+        run: corepack enable
+
+      # 22, the Flex host's runtime (azure/modules/api-function-flex.bicep).
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'yarn'
+
+      # Dependencies only. Packaging belongs to `scripts/package-api.py`.
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Azure Login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # Dev dependencies are most of the package's file count, and the Flex extract phase is paid
+      # per file. Nothing after this step needs them.
+      - name: Drop dev dependencies from the package
+        run: yarn workspaces focus --production
+
+      # `config-zip`: a Flex app has no Kudu wwwroot to POST a zip into — it publishes to the
+      # deployment blob container.
+      - name: Deploy the API to the Flex app
+        run: |
+          set -euo pipefail
+          export BUILD_ID="$(git describe --tags --always --dirty)-$(date -u +%H%M%S)"
+          python3 scripts/package-api.py . /tmp/api-flex.zip
+          az functionapp deployment source config-zip \
+            -g "$AZURE_RESOURCE_GROUP" \
+            -n "$API_FLEX_APP_NAME" \
+            --src /tmp/api-flex.zip
+
+      # Deployed is not the same fact as serving. `/health` needs no auth (src/http/routes.js) and
+      # host.json sets routePrefix "" so it is not under /api. The retries cover the cold start
+      # after a publish: a Flex app answers 503 until the new worker is up.
+      - name: Smoke test the deployed API
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 10 --retry-delay 10 --retry-all-errors \
+            "https://${API_FLEX_APP_NAME}.azurewebsites.net/health"
+
+      - name: Report failure to the job summary
+        if: failure()
+        run: |
+          echo "### API deployment failed" >> "$GITHUB_STEP_SUMMARY"
+          echo "Check the step logs above for packaging, config-zip or smoke test errors." >> "$GITHUB_STEP_SUMMARY"

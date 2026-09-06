@@ -1,0 +1,4 @@
+day,source_app,event_type,event_count,unique_sessions,unique_users
+2026-08-01 00:00:00+00,eagle-public,page_view,1420,318,0
+2026-08-01 00:00:00+00,eagle-admin,link_clicked,37,9,6
+2026-08-02 00:00:00+00,eagle-public,page_view,1105,290,0
