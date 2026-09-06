@@ -28,8 +28,7 @@ jobs:
       fail-fast: false
       matrix:
         environment: [test, prod]
-    # Also the OIDC subject claim, so each environment authenticates as its own CI identity. A
-    # scheduled run waits here if the environment has required reviewers.
+    # Environment sets the OIDC subject claim (azure-deploy-staging-api.yaml); reviewers gate a run.
     environment: ${{ matrix.environment }}
     steps:
       - name: Checkout repository
@@ -42,15 +41,16 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      # The script finds the storage account in the group, downloads, extracts and uploads. Keeping
-      # the logic there means a refresh by hand runs the same steps CI does.
+      # The script downloads, extracts and uploads; keeping the logic there means a refresh by hand
+      # runs the same steps CI does. The account is named, not looked up by group: the identity holds
+      # nothing at resource-group scope, and the name carries a uniqueString suffix.
       # Both values travel through the environment, never interpolated into the script body: an
       # expression is substituted before bash starts, so its content would be run as shell.
       - name: Download and upload the database
         env:
           MAXMIND_LICENSE_KEY: ${{ secrets.MAXMIND_LICENSE_KEY }}
-          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
-        run: ./scripts/refresh-geoip.sh --resource-group "$AZURE_RESOURCE_GROUP"
+          AZURE_STORAGE_ACCOUNT: ${{ vars.AZURE_STORAGE_ACCOUNT }}
+        run: ./scripts/refresh-geoip.sh --account "$AZURE_STORAGE_ACCOUNT"
 
       - name: Report failure to the job summary
         if: failure()

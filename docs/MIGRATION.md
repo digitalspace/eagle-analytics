@@ -15,8 +15,17 @@ export APIM_SHARED_HEADER_VALUE='…'   # same value as the APIM policy
 ```
 
 Copy `eventsDcrEndpoint` and `eventsDcrImmutableId` out of the deployment outputs. A Direct rule's
-endpoint is assigned at create time and cannot be composed from the name. The staging workflow does
-the same two steps on every push to `main`.
+endpoint is assigned at create time and cannot be composed from the name. Run this by hand from an
+operator login: CI deploys the application only.
+
+Then publish the API, by hand for the first one — a Bicep-only change triggers no deploy:
+
+```bash
+gh workflow run azure-deploy-staging-api.yaml -R digitalspace/eagle-analytics --ref main
+```
+
+Every later push to `main` that touches the application publishes the Function onto the settings this
+step wrote.
 
 ## 2. Dual-write on test for one week
 

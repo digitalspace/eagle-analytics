@@ -114,30 +114,58 @@ are read from the environment by the param files and never written into one.
 
 ## Deploy
 
+Infrastructure and application deploy separately, and only the application deploys from CI.
+
 | When | What runs |
 |---|---|
 | Pull request | `.github/workflows/pr.yaml` — lint and test, the client package, `az bicep build` |
-| Push to `main` | `.github/workflows/azure-deploy-staging-api.yaml` — the test estate, then the Function |
+| Push to `main` | `.github/workflows/azure-deploy-staging-api.yaml` — the Function on test |
 | Release | `.github/workflows/azure-deploy-prod.yaml`, dispatch only, with a tag verified on test |
+| Estate change | `bash scripts/deploy-infra.sh <test\|prod>`, by hand |
 
-Both deploy workflows run the estate first and the application second: the app boots on settings the
-template writes. By hand it is `bash scripts/deploy-infra.sh <test|prod>`, which needs
-`APIM_SHARED_HEADER_VALUE`, `AUDIT_SHARED_HEADER_VALUE`, `FRONT_DOOR_ID` and `BUDGET_CONTACT_EMAIL`
-exported, and takes `CONFIRM_PROD=yes` for a live prod deploy. The param files read all four with no
-fallback, so a missing export fails the Bicep build instead of blanking a live app setting.
+### The estate
 
-Each GitHub environment (`test`, `prod`) holds secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
-`APIM_SHARED_HEADER_VALUE`, `AUDIT_SHARED_HEADER_VALUE`, `FRONT_DOOR_ID` and `MAXMIND_LICENSE_KEY`, and
-variables `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP` and `BUDGET_CONTACT_EMAIL`. Declaring an
-environment changes the OIDC subject claim, so the federated credential on `analytics-cicd-<env>` has
-to be registered for `repo:digitalspace/eagle-analytics:environment:<env>`.
+`scripts/deploy-infra.sh` runs from an operator login, never from CI. The management group forbids
+granting Contributor to anyone, so a CI identity cannot hold the rights an ARM deployment of this
+group needs; the reason is Azure policy, not caution about automation.
 
-The CI identity needs Contributor on the resource group plus the right to write role assignments in it
-(User Access Administrator, or Role Based Access Control Administrator scoped to the group): the
-template grants the analytics identity its storage, DCR and workspace roles. It also needs read on
-`demi-audit-<env>`, whose customer id the template reads at deploy time, and which in production lives
-in `rg-demi-prod`. Log Analytics Reader for the analytics identity on that workspace is the one grant
-made by hand, because a resource-group deployment cannot assign a role outside its own group.
+The script needs `APIM_SHARED_HEADER_VALUE`, `AUDIT_SHARED_HEADER_VALUE`, `FRONT_DOOR_ID` and
+`BUDGET_CONTACT_EMAIL` exported in that shell, and `CONFIRM_PROD=yes` for a live prod deploy. The
+param files read all four with no fallback, so a missing export fails the Bicep build instead of
+blanking a live app setting. The two header values are the same strings eagle-demi's APIM deploy
+reads — its `azure/main.<env>.bicepparam` takes them from the same variable names, and both estates
+must be deployed with the same values or APIM's forwarded requests are refused. They are held as
+secrets on the eagle-demi `test` GitHub environment; nothing in either repo carries a value.
+
+The operator also needs read on `demi-audit-<env>`, whose customer id the template reads at deploy
+time, and which in production lives in `rg-demi-prod`. Log Analytics Reader for the analytics identity
+on that workspace is the one grant made by hand, because a resource-group deployment cannot assign a
+role outside its own group.
+
+### The application
+
+CI authenticates as the user-assigned managed identity `analytics-cicd-<env>` through a federated
+credential, with no client secret anywhere.
+
+| | |
+|---|---|
+| Federated credential | issuer `https://token.actions.githubusercontent.com`, subject `repo:digitalspace/eagle-analytics:environment:<env>`, audience `api://AzureADTokenExchange` |
+| RBAC | Website Contributor on `analytics-api-fc-<env>` **individually**, plus Storage Blob Data Contributor and Storage Account Contributor on the Function's storage account. Nothing at resource-group scope |
+| Config | Secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `MAXMIND_LICENSE_KEY`; variables `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, `AZURE_STORAGE_ACCOUNT`. All on the GitHub environment, nothing at repository scope |
+
+The template cannot make those assignments — it does not know the CI identity — so they are granted
+by hand after the first `./scripts/deploy-infra.sh <env> --live`, once the app and the account exist.
+
+Declaring `environment:` in a workflow changes the OIDC subject claim to
+`repo:digitalspace/eagle-analytics:environment:<env>`, and the subject is the whole contract: rename
+the environment and Azure Login fails with `AADSTS700213`. Create the credential for the new subject
+before renaming, prove a deploy green, and only then remove the old one.
+
+`.github/workflows/refresh-geoip.yaml` authenticates as the same identity and uploads to the `geoip`
+container on that same storage account, so those two storage roles cover it as well. It needs
+`MAXMIND_LICENSE_KEY` and `AZURE_STORAGE_ACCOUNT` on the environment: the account is named rather
+than looked up by resource group, because the identity holds nothing at that scope and the name
+carries a uniqueString suffix.
 
 The template grants the DEMI identity two things on this estate: publish on the analytics DCR, so
 eagle-demi writes audit rows into the same pipeline, and Log Analytics Reader on

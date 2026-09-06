@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Bicep deployment for the eagle-analytics estate. Run by CI as analytics-cicd-<env>, or by hand.
+# Bicep deployment for the eagle-analytics estate. Run by hand, never from CI: README "Deploy".
 
 usage() {
   cat <<'EOF'
@@ -20,8 +20,8 @@ deploy-infra.sh <test|prod> [--what-if|--live]
   BUDGET_CONTACT_EMAIL       address the budget thresholds notify.
 
   CONFIRM_PROD=yes           required for prod --live.
-  WHATIF_BEFORE_LIVE=1       run a what-if before a --live deploy. Off by default: the pull
-                             request already what-iffed the same commit.
+  WHATIF_BEFORE_LIVE=1       run a what-if before a --live deploy, in the same output. Off by
+                             default; a separate --what-if run is the usual way to read the diff.
 EOF
 }
 
@@ -95,9 +95,6 @@ STATE="$(az deployment group create -g "$RESOURCE_GROUP" --subscription "$SUBSCR
   -f "${REPO_ROOT}/azure/main.bicep" -p "$PARAM_FILE" \
   -n "$NAME" --only-show-errors --query "properties.provisioningState" -o tsv)"
 echo "$STATE"
-if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-  echo "\`${NAME}\` (${ENVIRONMENT}): ${STATE}" >> "$GITHUB_STEP_SUMMARY"
-fi
 [ "$STATE" = 'Succeeded' ] || exit 1
 
 echo -e "${GREEN}✓ done. Copy eventsDcrEndpoint and eventsDcrImmutableId from the deployment outputs${NC}"
