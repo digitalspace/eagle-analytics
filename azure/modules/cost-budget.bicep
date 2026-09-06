@@ -20,8 +20,11 @@ param budgetAmount int = 60
 @description('Email addresses to receive budget threshold alerts. Passed in, never defaulted: an address in a public repository is a spam target.')
 param contactEmails array
 
-@description('Value of the `Application` tag every resource in this estate carries. main.bicep passes its own defaultTags.Application, so the filter and the tags cannot drift apart.')
-param applicationTag string
+@description('Tag key and value every resource in this estate carries. main.bicep passes both from the same defaultTags entry, so the filter key and the tags cannot drift apart.')
+@minLength(1)
+param applicationTagKey string
+@minLength(1)
+param applicationTagValue string
 
 // utcNow() is only legal as a parameter default in Bicep, which is the shape wanted here: evaluated
 // once at deployment, never drifting on a redeploy of an unchanged template.
@@ -46,9 +49,9 @@ resource costBudget 'Microsoft.Consumption/budgets@2021-10-01' = {
     // carry the tag; `In` is the only operator a budget filter accepts.
     filter: {
       tags: {
-        name: 'Application'
+        name: applicationTagKey
         operator: 'In'
-        values: [applicationTag]
+        values: [applicationTagValue]
       }
     }
     notifications: {
