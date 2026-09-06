@@ -6,11 +6,34 @@ It queues events, batches them, and posts them to `POST ${apiUrl}/events`. On pa
 
 ## Install
 
-Published to GitHub Packages. The consuming repo needs `@digitalspace:registry=https://npm.pkg.github.com` in its `.npmrc` or `.yarnrc.yml`.
+Published to GitHub Packages, which asks for a token on every install even though this repository is
+public. The registry line on its own gets a 401.
+
+`eagle-public` and `eagle-admin` are both Yarn 4, which ignores `.npmrc`, so the config goes in
+`.yarnrc.yml`:
+
+```yaml
+npmScopes:
+  digitalspace:
+    npmRegistryServer: "https://npm.pkg.github.com"
+    npmAlwaysAuth: true
+    npmAuthToken: "${GH_PACKAGES_TOKEN}"
+```
+
+An npm or Yarn 1 consumer uses `.npmrc` instead:
+
+```
+@digitalspace:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GH_PACKAGES_TOKEN}
+```
 
 ```sh
 yarn add @digitalspace/eagle-analytics-client
 ```
+
+In GitHub Actions the workflow's own `GITHUB_TOKEN` is enough once this package grants that
+repository read access. Anywhere else the token is a classic personal access token with
+`read:packages`.
 
 ## React
 
@@ -83,5 +106,25 @@ Nothing here throws into the host app: listener and method bodies are guarded, a
 yarn install
 yarn test        # vitest, jsdom
 yarn typecheck
-yarn build       # dist/index.js (ESM), dist/index.cjs, dist/index.d.ts
+yarn build       # dist/index.js (ESM), dist/index.cjs, and .d.ts / .d.cts types
 ```
+
+## Releases
+
+The tag drives the publish, and it has to match the version in `package.json`.
+
+1. Bump `version` in `client/package.json` on `main`.
+2. Tag that commit `client-vX.Y.Z` with the same numbers.
+3. Push the tag.
+
+```sh
+git tag client-v0.1.0
+git push origin client-v0.1.0
+```
+
+Pushing the tag runs `.github/workflows/publish-client.yaml`: it compares the tag against
+`package.json` and stops there if they disagree, then typechecks, tests, builds and publishes to
+GitHub Packages. The run's own `GITHUB_TOKEN` is the only credential.
+
+The registry will not accept a version it already holds, so a bad publish needs a new patch version
+rather than a moved tag.
