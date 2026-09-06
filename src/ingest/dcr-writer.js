@@ -62,13 +62,13 @@ function enqueue(stream, row) {
   // .catch on both call sites: batches() stringifies outside sendWithRetry's try, so a row that
   // cannot be serialised rejects flush() with nothing attached, which is an unhandled rejection.
   if (buffer.length >= config.maxBatch) {
-    flush().catch((err) => logger.error(`[analytics] flush failed: ${err.message}`));
+    flush().catch((err) => logger.error(`[analytics] flush failed: ${describeUploadError(err)}`));
     return;
   }
 
   if (!flushTimer) {
     flushTimer = setTimeout(() => {
-      flush().catch((err) => logger.error(`[analytics] flush failed: ${err.message}`));
+      flush().catch((err) => logger.error(`[analytics] flush failed: ${describeUploadError(err)}`));
     }, config.flushMs);
     // Never hold the worker open for a pending flush; the shutdown hook in index.js drains instead.
     if (flushTimer.unref) flushTimer.unref();
@@ -142,6 +142,58 @@ async function flush() {
   while (inFlight.size > 0) await Promise.all([...inFlight]);
 }
 
+// How many causes a drop line reports. Every row in a batch goes to one DCR, so the causes repeat;
+// three distinct ones is already enough to tell a bad role assignment from a throttled workspace.
+const MAX_REPORTED_CAUSES = 3;
+
+/**
+ * @azure/monitor-ingestion rejects with an AggregateLogsUploadError whose own `.message` is the
+ * literal `undefined\n}` — its constructor interpolates an argument the SDK never passes. The
+ * status code and text are on `errors[i].cause`, a RestError. Read the predicate lazily, like the
+ * rest of the Azure SDK in this file, and never let the lookup itself throw: this runs from a catch.
+ */
+let aggregatePredicate;
+function isAggregateUploadError(err) {
+  if (!err) return false;
+  if (aggregatePredicate === undefined) {
+    try {
+      aggregatePredicate = require('@azure/monitor-ingestion').isAggregateLogsUploadError;
+    } catch (_err) {
+      aggregatePredicate = null;
+    }
+  }
+  return Boolean(aggregatePredicate && aggregatePredicate(err)) || Array.isArray(err.errors);
+}
+
+function causeStatusCodes(err) {
+  if (isAggregateUploadError(err)) return err.errors.map((entry) => entry.cause && entry.cause.statusCode);
+  return [err && err.statusCode];
+}
+
+/** A short cause for a log line. Never the failed rows: callers log this into the application log. */
+function describeUploadError(err) {
+  if (!isAggregateUploadError(err)) return err && err.message;
+
+  const causes = [];
+  for (const { cause } of err.errors) {
+    const status = cause && cause.statusCode ? `${cause.statusCode} ` : '';
+    const text = `${status}${(cause && cause.message) || 'no cause reported'}`;
+    if (!causes.includes(text)) causes.push(text);
+    if (causes.length === MAX_REPORTED_CAUSES) break;
+  }
+  return causes.join('; ');
+}
+
+/**
+ * 401 and 403 mean the identity is not a Monitoring Metrics Publisher on the DCR (Owner does not
+ * carry that data action). Waiting does not grant a role, so two more calls only cost latency on
+ * the shutdown path and bury the one cause under three identical log lines.
+ */
+function isPermissionFailure(err) {
+  const codes = causeStatusCodes(err);
+  return codes.length > 0 && codes.every((code) => code === 401 || code === 403);
+}
+
 async function sendWithRetry(stream, batch) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -149,12 +201,13 @@ async function sendWithRetry(stream, batch) {
       logger.debug(`[analytics] sent ${batch.length} row(s) to ${stream}`);
       return;
     } catch (err) {
-      if (attempt === 2) {
+      if (attempt === 2 || isPermissionFailure(err)) {
+        const tries = attempt + 1;
         // Count and cause only, never the rows: SourceIp is masked by the DCR transform, and the
         // application-log workspace is read by more people than the analytics one.
         // analytics-drop-<env> alerts on this string.
         logger.error(
-          `[analytics] dropped ${batch.length} row(s) for ${stream} after 3 attempts: ${err.message}`
+          `[analytics] dropped ${batch.length} row(s) for ${stream} after ${tries} attempt${tries === 1 ? '' : 's'}: ${describeUploadError(err)}`
         );
         return;
       }
@@ -166,6 +219,7 @@ async function sendWithRetry(stream, batch) {
 module.exports = {
   enqueue,
   flush,
+  describeUploadError,
   EVENTS_STREAM,
   AUDIT_STREAM,
   DAILY_STREAM,
