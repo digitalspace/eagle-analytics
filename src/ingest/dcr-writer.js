@@ -149,24 +149,16 @@ const MAX_REPORTED_CAUSES = 3;
 /**
  * @azure/monitor-ingestion rejects with an AggregateLogsUploadError whose own `.message` is the
  * literal `undefined\n}` — its constructor interpolates an argument the SDK never passes. The
- * status code and text are on `errors[i].cause`, a RestError. Read the predicate lazily, like the
- * rest of the Azure SDK in this file, and never let the lookup itself throw: this runs from a catch.
+ * status code and text are on `errors[i].cause`, a RestError. The array is the whole test: the SDK
+ * constructor always assigns `.errors`, while its isAggregateLogsUploadError also accepts a
+ * name-only object with no `.errors` to read, which would throw here — inside a catch handler.
  */
-let aggregatePredicate;
 function isAggregateUploadError(err) {
-  if (!err) return false;
-  if (aggregatePredicate === undefined) {
-    try {
-      aggregatePredicate = require('@azure/monitor-ingestion').isAggregateLogsUploadError;
-    } catch (_err) {
-      aggregatePredicate = null;
-    }
-  }
-  return Boolean(aggregatePredicate && aggregatePredicate(err)) || Array.isArray(err.errors);
+  return Boolean(err) && Array.isArray(err.errors);
 }
 
 function causeStatusCodes(err) {
-  if (isAggregateUploadError(err)) return err.errors.map((entry) => entry.cause && entry.cause.statusCode);
+  if (isAggregateUploadError(err)) return err.errors.map((entry) => entry && entry.cause && entry.cause.statusCode);
   return [err && err.statusCode];
 }
 
@@ -175,9 +167,11 @@ function describeUploadError(err) {
   if (!isAggregateUploadError(err)) return err && err.message;
 
   const causes = [];
-  for (const { cause } of err.errors) {
-    const status = cause && cause.statusCode ? `${cause.statusCode} ` : '';
-    const text = `${status}${(cause && cause.message) || 'no cause reported'}`;
+  for (const entry of err.errors) {
+    const cause = entry && entry.cause;
+    if (!cause) continue;
+    const status = cause.statusCode ? `${cause.statusCode} ` : '';
+    const text = `${status}${cause.message || 'no cause reported'}`;
     if (!causes.includes(text)) causes.push(text);
     if (causes.length === MAX_REPORTED_CAUSES) break;
   }

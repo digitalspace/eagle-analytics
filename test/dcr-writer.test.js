@@ -124,8 +124,12 @@ test('a drop line carries the cause the SDK buries, not its own placeholder mess
   await writer.flush();
 
   // AggregateLogsUploadError.message is `undefined\n}`; an operator needs the status and the text.
-  assert.match(errors[0], /^\[analytics\] dropped 1 row\(s\) for Custom-EagleEvents_CL/);
-  assert.match(errors[0], /403 Operation returned an invalid status code Forbidden/);
+  // The tail says how many calls it took, which separates a missing role from a transient failure.
+  assert.strictEqual(
+    errors[0],
+    '[analytics] dropped 1 row(s) for Custom-EagleEvents_CL after 1 attempt: '
+      + '403 Operation returned an invalid status code Forbidden'
+  );
   assert.doesNotMatch(errors[0], /undefined/);
 });
 
@@ -151,12 +155,55 @@ test('a 503 keeps all three attempts', async (t) => {
     throw uploadError({ statusCode: 503, message: 'Service Unavailable' });
   });
   t.after(() => writer._resetTransport());
+  const errors = [];
+  t.mock.method(logger, 'error', (message) => errors.push(message));
+
+  writer.enqueue(EVENTS_STREAM, row('page_view'));
+  await writer.flush();
+
+  assert.strictEqual(attempts, 3);
+  assert.strictEqual(
+    errors[0],
+    '[analytics] dropped 1 row(s) for Custom-EagleEvents_CL after 3 attempts: 503 Service Unavailable'
+  );
+});
+
+// The SDK splits a batch into chunks and aggregates every chunk's failure, so one 403 next to a
+// retryable cause must not cut the retries short: only an all-permission batch is hopeless.
+test('a batch with one 403 and one 503 keeps all three attempts', async (t) => {
+  let attempts = 0;
+  writer._setTransport(async () => {
+    attempts += 1;
+    throw uploadError(
+      { statusCode: 403, message: 'Forbidden' },
+      { statusCode: 503, message: 'Service Unavailable' }
+    );
+  });
+  t.after(() => writer._resetTransport());
   t.mock.method(logger, 'error', () => {});
 
   writer.enqueue(EVENTS_STREAM, row('page_view'));
   await writer.flush();
 
   assert.strictEqual(attempts, 3);
+});
+
+test('a 401 is dropped on the first attempt, like a 403', async (t) => {
+  let attempts = 0;
+  writer._setTransport(async () => {
+    attempts += 1;
+    throw uploadError(
+      { statusCode: 401, message: 'Unauthorized' },
+      { statusCode: 401, message: 'Unauthorized' }
+    );
+  });
+  t.after(() => writer._resetTransport());
+  t.mock.method(logger, 'error', () => {});
+
+  writer.enqueue(EVENTS_STREAM, row('page_view'));
+  await writer.flush();
+
+  assert.strictEqual(attempts, 1);
 });
 
 test('describeUploadError returns a plain error by its own message', () => {
@@ -171,6 +218,15 @@ test('describeUploadError collapses causes that repeat across a batch', () => {
   ));
 
   assert.strictEqual(described, '403 Forbidden; 429 Too many requests');
+});
+
+test('describeUploadError skips an errors entry that carries no cause', () => {
+  const described = writer.describeUploadError(uploadError(
+    undefined,
+    { statusCode: 429, message: 'Too many requests' }
+  ));
+
+  assert.strictEqual(described, '429 Too many requests');
 });
 
 test('describeUploadError reports at most three distinct causes', () => {
