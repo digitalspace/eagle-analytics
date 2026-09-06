@@ -121,7 +121,8 @@ test('a failed query is logged by its summary, never by its text', async (t) => 
 });
 
 // The SDK message for a refused query is only 'Unexpected status code: 400'; the reason lives in the
-// response body's error chain, and either casing of innererror shows up across Azure services.
+// response body's error chain, and either casing of innererror shows up across Azure services. Those
+// inner messages quote table names and workspace GUIDs, so only the codes may reach the log.
 test('a refused query is logged with its status and inner error chain', async (t) => {
   runner._setRunner(async () => {
     throw Object.assign(new Error('Unexpected status code: 400'), {
@@ -133,7 +134,10 @@ test('a refused query is logged with its status and inner error chain', async (t
           innerError: {
             code: 'SemanticError',
             message: 'A semantic error occurred.',
-            innererror: { code: 'SEM0260', message: "Unknown function: 'workspace'" }
+            innererror: {
+              code: 'SEM0260',
+              message: "'DemiEventsHourly_CL' on workspace 4f6c9a3e-2b1d-4e7f-9a0c-8d5e1f2b3a4c"
+            }
           }
         }
       }
@@ -145,7 +149,9 @@ test('a refused query is logged with its status and inner error chain', async (t
   await assert.rejects(runner.run('EagleEvents_CL', TIMESPAN, SUMMARY));
 
   assert.match(lines[0], /status=400/);
-  assert.match(lines[0], /BadArgumentError: .* <- SemanticError: .* <- SEM0260: Unknown function: 'workspace'/);
+  assert.match(lines[0], /BadArgumentError <- SemanticError <- SEM0260/);
+  assert.doesNotMatch(lines[0], /DemiEventsHourly_CL/);
+  assert.doesNotMatch(lines[0], /4f6c9a3e-2b1d-4e7f-9a0c-8d5e1f2b3a4c/);
 });
 
 test('a partial result is warned about by its summary too', async (t) => {

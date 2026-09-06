@@ -73,11 +73,12 @@ async function run(kql, timespan, summary = '') {
     result = await execute(kql, timespan);
   } catch (err) {
     // The SDK's own message is just the status code; the reason the service refused (SEM0260 and
-    // friends) only exists in the nested error chain of the response body.
+    // friends) only exists in the nested error chain of the response body. Codes only, never
+    // message text: the service quotes table names and workspace GUIDs back in those messages.
     const chain = [];
     let node = err.details?.error;
     while (node && chain.length < 5) {
-      if (node.code || node.message) chain.push(`${node.code || '?'}: ${node.message || ''}`);
+      if (node.code) chain.push(node.code);
       node = node.innerError || node.innererror;
     }
     const status = err.statusCode ? ` status=${err.statusCode}` : '';
