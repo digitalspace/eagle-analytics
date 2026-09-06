@@ -120,6 +120,34 @@ test('a failed query is logged by its summary, never by its text', async (t) => 
   assert.doesNotMatch(lines.join(' '), /EagleEvents_CL/);
 });
 
+// The SDK message for a refused query is only 'Unexpected status code: 400'; the reason lives in the
+// response body's error chain, and either casing of innererror shows up across Azure services.
+test('a refused query is logged with its status and inner error chain', async (t) => {
+  runner._setRunner(async () => {
+    throw Object.assign(new Error('Unexpected status code: 400'), {
+      statusCode: 400,
+      details: {
+        error: {
+          code: 'BadArgumentError',
+          message: 'The request had some invalid properties',
+          innerError: {
+            code: 'SemanticError',
+            message: 'A semantic error occurred.',
+            innererror: { code: 'SEM0260', message: "Unknown function: 'workspace'" }
+          }
+        }
+      }
+    });
+  });
+  const lines = [];
+  t.mock.method(logger, 'error', (message) => lines.push(message));
+
+  await assert.rejects(runner.run('EagleEvents_CL', TIMESPAN, SUMMARY));
+
+  assert.match(lines[0], /status=400/);
+  assert.match(lines[0], /BadArgumentError: .* <- SemanticError: .* <- SEM0260: Unknown function: 'workspace'/);
+});
+
 test('a partial result is warned about by its summary too', async (t) => {
   runner._setRunner(async () => ({
     status: 'PartialFailure',

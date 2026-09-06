@@ -75,12 +75,15 @@ function stringValue(value, dimension, op) {
  *
  * Still pattern-checked: a GUID, a name and a resource id are all made of these characters, and a
  * mistyped setting must fail as a 400 here rather than as whatever KQL a stray quote would make.
+ *
+ * Returned plain-quoted, not through `literal()`: the service answers `workspace(@'...')` with
+ * SEM0260 unknown function, and the pattern above is what makes a plain literal safe.
  */
 function workspaceRef(value, envName) {
   const ref = String(value || '').trim();
   if (!ref) throw bad(`${envName} is not configured, so this measure is unavailable.`);
   if (!/^[A-Za-z0-9._/-]+$/.test(ref)) throw bad(`${envName} is not a usable workspace reference.`);
-  return ref;
+  return `'${ref}'`;
 }
 
 /** ISO from/to, bounded so no request can ask for a scan wider than raw retention. */
@@ -233,7 +236,7 @@ function demiFrom() {
     'union',
     `  (${schema.SOURCES.daily} | project ${columns}),`,
     // DEMI's rollup is hourly and has no Day column, so its own bucket is folded down to one.
-    `  (workspace(${literal(ref)}).${schema.DEMI_TABLE}` +
+    `  (workspace(${ref}).${schema.DEMI_TABLE}` +
       ` | extend SourceApp = ${literal(schema.DEMI_SOURCE_APP)}, ${day} = bin(TimeGenerated, 1d)` +
       ` | project ${columns})`
   ].join('\n');
@@ -242,7 +245,7 @@ function demiFrom() {
 function tableFor(source, includeDemi) {
   if (source === 'errors') {
     const ref = workspaceRef(config.eagleLogsWorkspace, 'EAGLE_LOGS_WORKSPACE');
-    return `workspace(${literal(ref)}).${schema.ERRORS_TABLE}`;
+    return `workspace(${ref}).${schema.ERRORS_TABLE}`;
   }
   return includeDemi ? demiFrom() : schema.SOURCES[source];
 }
@@ -272,10 +275,12 @@ function timespanFor(source, from, to) {
  * log line can be matched to the query `?debug=1` returns. The text itself never goes to a log, which
  * is read by more people than the analytics workspace — it names workspaces and tables.
  */
-function summarize(kql, { measure, source, bin, dimensions }) {
+function summarize(kql, { measure, source, bin, dimensions, includeDemi }) {
   const id = crypto.createHash('sha256').update(kql).digest('hex').slice(0, 8);
+  // demi is named only when asked for: the union reads the same source, so otherwise both shapes log
+  // the same line.
   return `q=${id} measure=${measure} source=${source} bin=${bin || 'none'} ` +
-    `dims=${dimensions.length ? dimensions.join(',') : 'none'}`;
+    `dims=${dimensions.length ? dimensions.join(',') : 'none'}${includeDemi ? ' demi=true' : ''}`;
 }
 
 /**
@@ -352,7 +357,7 @@ function compile(input) {
   return {
     kql,
     timespan: timespanFor(source, from, to),
-    summary: summarize(kql, { measure, source, bin, dimensions })
+    summary: summarize(kql, { measure, source, bin, dimensions, includeDemi })
   };
 }
 
