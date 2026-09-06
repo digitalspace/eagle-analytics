@@ -1,0 +1,3 @@
+page_name,page_path,source_app,total_views,unique_sessions,unique_users,first_viewed,last_viewed
+"Projects, all",/projects,eagle-public,8210,2044,0,2025-09-01 12:00:00+00,2026-08-31 23:41:02+00
+Home,/,eagle-public,15320,4880,0,2025-09-01 08:15:00+00,2026-08-31 22:07:55+00

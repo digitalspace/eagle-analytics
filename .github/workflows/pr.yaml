@@ -1,0 +1,90 @@
+# Lint, test and compile the Bicep templates on every pull request.
+
+name: PR Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Every job only reads the checkout. Without this block the token gets the repository default,
+# which is broader.
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # Before setup-node: its Yarn 4 cache detection reads the corepack shim (actions/setup-node#1027).
+      - name: Enable Corepack
+        run: corepack enable
+
+      # 22, the Flex host's runtime. Testing on a version the Function App does not serve proves
+      # the wrong thing.
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Lint and test
+        run: yarn check
+
+  client:
+    name: Client Package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Its own project with its own lockfile and its own test runner, so the root `yarn check` does not
+    # reach it. Without this job the package is only ever built by the publish workflow, on a tag.
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'yarn'
+          cache-dependency-path: client/yarn.lock
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Lint, typecheck, test and build
+        run: |
+          yarn lint
+          yarn typecheck
+          yarn test
+          yarn build
+
+  validate-bicep:
+    name: Validate Bicep Template
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # No Azure login: `az bicep build` compiles locally. Keeping it loginless makes deploying from
+      # this workflow impossible rather than merely unauthenticated.
+      - name: Validate Bicep template
+        run: az bicep build --file ./azure/main.bicep

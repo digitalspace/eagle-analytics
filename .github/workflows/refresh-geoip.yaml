@@ -1,0 +1,59 @@
+# Replace the GeoLite2 city database in the analytics storage account. MaxMind rebuilds it about
+# twice a month; an ingest instance loads it once on its first request, so a refresh reaches events
+# as instances recycle.
+
+name: Refresh GeoLite2 database
+
+on:
+  schedule:
+    # 08:00 UTC on the 3rd: MaxMind publishes the month's first build in the first days.
+    - cron: '0 8 3 * *'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: refresh-geoip
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Refresh ${{ matrix.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      # One environment failing must not skip the other: they are separate estates.
+      fail-fast: false
+      matrix:
+        environment: [test, prod]
+    # Also the OIDC subject claim, so each environment authenticates as its own CI identity. A
+    # scheduled run waits here if the environment has required reviewers.
+    environment: ${{ matrix.environment }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Azure Login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # The script finds the storage account in the group, downloads, extracts and uploads. Keeping
+      # the logic there means a refresh by hand runs the same steps CI does.
+      # Both values travel through the environment, never interpolated into the script body: an
+      # expression is substituted before bash starts, so its content would be run as shell.
+      - name: Download and upload the database
+        env:
+          MAXMIND_LICENSE_KEY: ${{ secrets.MAXMIND_LICENSE_KEY }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: ./scripts/refresh-geoip.sh --resource-group "$AZURE_RESOURCE_GROUP"
+
+      - name: Report failure to the job summary
+        if: failure()
+        run: |
+          echo "### GeoLite2 refresh failed for ${{ matrix.environment }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Events keep flowing without Country, Region and City. Check the licence key and the blob role assignment." >> "$GITHUB_STEP_SUMMARY"

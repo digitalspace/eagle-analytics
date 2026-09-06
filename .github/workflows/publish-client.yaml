@@ -1,0 +1,81 @@
+# Publish the browser client to GitHub Packages from a `client-v*` tag.
+#
+# Its own tag series, because `client/` releases on its own cadence: the API deploys from main, the
+# package only when a consumer needs a new version.
+
+name: Publish analytics client
+
+on:
+  push:
+    tags:
+      - 'client-v*'
+
+concurrency:
+  group: publish-client-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+defaults:
+  run:
+    working-directory: client
+
+jobs:
+  publish:
+    name: Build & publish @digitalspace/eagle-analytics-client
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout the tag
+        uses: actions/checkout@v7
+
+      # Before setup-node: its Yarn 4 cache detection reads the corepack shim (actions/setup-node#1027).
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'yarn'
+          cache-dependency-path: client/yarn.lock
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      # The tag names the version, package.json holds it, and a mismatch publishes something nobody
+      # asked for. Checked before the build so the run fails in seconds.
+      - name: Check the tag matches package.json
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "client-v${PACKAGE_VERSION}" ]; then
+            echo "Tag $TAG does not match client/package.json version $PACKAGE_VERSION."
+            exit 1
+          fi
+
+      - name: Typecheck
+        run: yarn typecheck
+
+      - name: Test
+        run: yarn test
+
+      - name: Build
+        run: yarn build
+
+      # `publishConfig.registry` in client/package.json points at GitHub Packages; the token is the
+      # run's own, which can write packages in this repository and nothing else.
+      - name: Publish
+        env:
+          YARN_NPM_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: yarn npm publish
+
+      - name: Report failure to the job summary
+        if: failure()
+        run: |
+          echo "### Client publish failed" >> "$GITHUB_STEP_SUMMARY"
+          echo "Nothing was published. Fix the cause and move the tag, or cut a new one." >> "$GITHUB_STEP_SUMMARY"
