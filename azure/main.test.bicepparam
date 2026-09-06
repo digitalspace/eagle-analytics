@@ -35,12 +35,15 @@ param frontDoorId = readEnvironmentVariable('FRONT_DOOR_ID')
 
 // The two AFD hostnames carry a deploy-time hash and cannot be composed: eagle-public's is in
 // eagle-edge/README.md, eagle-demi-admin's in eagle-demi/azure/main.test.bicepparam. Third is
-// eagle-admin on OpenShift test. localhost is a developer running an admin app against the deployed
-// gateway, and is deliberately absent from prod.
+// eagle-admin on OpenShift test. Both the apex and the www host serve the public site, same as prod.
+// localhost is a developer running an admin app against the deployed gateway, and is deliberately
+// absent from prod.
 param allowedOrigins = [
   'https://eagle-public-test-dbg8ghh8gjd0bscx.a02.azurefd.net'
   'https://demi-admin-test-hbf7cfh7ggfhf4gf.a02.azurefd.net'
   'https://eagle-test.apps.silver.devops.gov.bc.ca'
+  'https://test.projects.eao.gov.bc.ca'
+  'https://www.test.projects.eao.gov.bc.ca'
   'http://localhost:4200'
 ]
 
