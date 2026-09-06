@@ -17,7 +17,7 @@
 
 const fs = require('fs');
 
-const { DAILY_STREAM } = require('../src/ingest/dcr-writer');
+const { DAILY_STREAM, describeUploadError } = require('../src/ingest/dcr-writer');
 const { logger } = require('../src/utils/logger');
 
 const ENVIRONMENTS = ['dev', 'test', 'prod'];
@@ -265,7 +265,7 @@ if (require.main === module) {
   main(process.argv.slice(2))
     .then((code) => { process.exitCode = code; })
     .catch((err) => {
-      logger.error(`[import] ${err.message}`);
+      logger.error(`[import] ${describeUploadError(err)}`);
       process.exitCode = 1;
     });
 }
