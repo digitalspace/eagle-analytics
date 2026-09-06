@@ -186,6 +186,7 @@ module costBudget './modules/cost-budget.bicep' = {
     budgetAmount: budgetAmount
     contactEmails: contactEmails
     startDate: budgetStartDate
+    applicationTag: defaultTags.Application
   }
 }
 
