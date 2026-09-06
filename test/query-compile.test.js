@@ -104,7 +104,7 @@ test('p95Duration takes the 95th percentile of DurationMs', () => {
 
 test('errors read AppExceptions in the application workspace and rename AppRoleName', () => {
   assert.strictEqual(kql({ measure: 'errors', bin: 'day', groupBy: ['SourceApp'] }), [
-    "workspace(@'4a1b3c5d-1111-4222-8333-aaaaaaaaaaaa').AppExceptions",
+    "workspace('4a1b3c5d-1111-4222-8333-aaaaaaaaaaaa').AppExceptions",
     '| summarize value = count() by t = bin(TimeGenerated, 1d), SourceApp = AppRoleName',
     '| order by t asc, SourceApp asc',
     '| limit 1000'
@@ -154,13 +154,30 @@ test('includeDemi unions the DEMI hourly rollup and labels its rows', () => {
   assert.strictEqual(kql({ measure: 'events', bin: 'day', groupBy: ['SourceApp'], includeDemi: true }), [
     'union',
     '  (EagleEventsDaily_CL | project Day, SourceApp, EventName, ProjectId, Events, Users),',
-    "  (workspace(@'7f2e9d8c-4444-4555-8666-bbbbbbbbbbbb').DemiEventsHourly_CL | extend SourceApp = @'eagle-demi'" +
+    "  (workspace('7f2e9d8c-4444-4555-8666-bbbbbbbbbbbb').DemiEventsHourly_CL | extend SourceApp = @'eagle-demi'" +
       ", Day = bin(TimeGenerated, 1d) | project Day, SourceApp, EventName, ProjectId, Events, Users)",
     "| where Day >= todatetime(@'2026-08-29T00:00:00.000Z') and Day < todatetime(@'2026-09-05T00:00:00.000Z')",
     '| summarize value = sum(Events) by t = bin(Day, 1d), SourceApp',
     '| order by t asc, SourceApp asc',
     '| limit 1000'
   ].join('\n'));
+});
+
+// SEM0260 unknown function: Log Analytics resolves workspace() from a plain string literal only, so
+// the cross-workspace scope is the one place a verbatim literal is wrong.
+test('a cross-workspace scope is never emitted as a verbatim literal', () => {
+  const errors = kql({ measure: 'errors', bin: 'day', groupBy: ['SourceApp'] });
+  const demi = kql({ measure: 'events', source: 'daily', bin: 'day', includeDemi: true });
+
+  assert.ok(!errors.includes('workspace(@'), errors);
+  assert.ok(!demi.includes('workspace(@'), demi);
+});
+
+test('the summary tells a DEMI union apart from the same query without it', () => {
+  const body = { measure: 'events', source: 'daily', bin: 'day', range: WEEK };
+
+  assert.ok(!compile(body).summary.includes('demi='), compile(body).summary);
+  assert.match(compile({ ...body, includeDemi: true }).summary, /source=daily bin=day dims=none demi=true$/);
 });
 
 test('auto reads raw events for a short range', () => {
