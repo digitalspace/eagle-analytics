@@ -65,3 +65,18 @@ test('ALLOWED_ORIGINS is read as a trimmed list', () => {
 test('an unset ALLOWED_ORIGINS admits no browser at all', () => {
   assert.deepStrictEqual(loadConfig({ ENVIRONMENT: 'test' }).allowedOrigins, []);
 });
+
+test('TRUSTED_PROXY_IPS is read as a trimmed list', () => {
+  const config = loadConfig({
+    ENVIRONMENT: 'test',
+    TRUSTED_PROXY_IPS: '142.34.194.121, 142.34.194.122'
+  });
+
+  assert.deepStrictEqual(config.trustedProxyIps, ['142.34.194.121', '142.34.194.122']);
+});
+
+// Nothing trusted is the safe default: every caller is located and capped by the last hop, which is
+// what this service did before the cluster's egress addresses were known.
+test('an unset TRUSTED_PROXY_IPS trusts no proxy', () => {
+  assert.deepStrictEqual(loadConfig({ ENVIRONMENT: 'test' }).trustedProxyIps, []);
+});

@@ -81,6 +81,9 @@ param allowedOrigins array = []
 @description('Front Door\'s own id (`az afd profile show --query frontDoorId`). Only on an X-Azure-FDID match is X-Azure-SocketIP trusted over the caller-supplied X-Forwarded-For.')
 param frontDoorId string = ''
 
+@description('Comma list of the addresses our own proxies call out from, as APIM reports them in X-Client-Ip (the OpenShift cluster egress pool). A request stamped with one of these is read one X-Forwarded-For hop further back for the visitor, and a server producer behind them is exempt from the per-address event cap. Empty trusts nothing.')
+param trustedProxyIps string = ''
+
 var apiAppName = 'analytics-api-fc-${environmentName}'
 var appServicePlanName = 'analytics-plan-fc-${environmentName}'
 var storageAccountName = take('analyticsfc${environmentName}${uniqueString(resourceGroup().id)}', 24)
@@ -351,6 +354,10 @@ resource apiFunctionApp 'Microsoft.Web/sites@2023-12-01' = {
         {
           name: 'FRONT_DOOR_ID'
           value: frontDoorId
+        }
+        {
+          name: 'TRUSTED_PROXY_IPS'
+          value: trustedProxyIps
         }
         // Picks the JSON log format in src/utils/logger.js.
         {

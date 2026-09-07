@@ -76,24 +76,55 @@ function isPrivateIp(value) {
   return IPV4_PRIVATE.some((range) => range.test(ip));
 }
 
+/** One of the addresses our own proxies call out from (config.trustedProxyIps). */
+function isTrustedProxy(ip) {
+  return Boolean(ip) && config.trustedProxyIps.includes(ip);
+}
+
 /**
- * Who called, as far as it can be trusted. X-Azure-ClientIP is deliberately not read: Front Door
- * derives it from the caller's own X-Forwarded-For, so the caller controls it. Same trust rule as
- * eagle-api's rateLimitKey helper — the socket address only when the request really came through our
- * Front Door profile.
+ * Who called, as far as it can be trusted.
+ *
+ * A browser event arrives through
+ * `browser -> OpenShift router -> rproxy -> demi-apim-<env> -> Functions front end -> here`. The
+ * router appends the visitor to X-Forwarded-For; APIM appends nothing to it and instead stamps the
+ * address IT saw in X-Client-Ip, and the Functions front end then appends APIM's own outbound address.
+ * So the header reads `[…what the caller sent…, visitor, apim]` — hop -1 is Azure's, hop -2 is the
+ * visitor, and everything further left is caller-written and worth nothing.
+ *
+ * X-Client-Ip is only trustworthy because every route reaching here also carries `apimGuard`
+ * (src/auth/apim-header.js): APIM sets it with `override`, and a request that skipped the gateway is a
+ * 401 before a controller runs. X-Azure-ClientIP stays unread: Front Door derives it from the caller's
+ * own X-Forwarded-For. Same trust rule as eagle-api's rateLimitKey helper.
+ *
+ * @returns {{ip: string, trusted: boolean}} `trusted` marks one of our own server producers, which
+ * shares the cluster's egress address with every browser behind it and so cannot be capped by address.
  */
-function clientIp(req) {
+function resolveCaller(req) {
   if (config.frontDoorId && safeEqual(req.header('x-azure-fdid'), config.frontDoorId)) {
     const socketIp = normalizeIp(req.header('x-azure-socketip'));
-    if (socketIp) return socketIp;
+    if (socketIp) return { ip: socketIp, trusted: false };
   }
 
-  // The RIGHT-most hop, not the left-most: every entry to its left was written by whoever called us,
-  // and the last one is the address the proxy immediately in front of this app appended.
-  const forwarded = req.header('x-forwarded-for');
-  if (forwarded) return normalizeIp(String(forwarded).split(',').at(-1));
+  const hops = String(req.header('x-forwarded-for') || '').split(',').map(normalizeIp).filter(Boolean);
+  const gatewaySaw = normalizeIp(req.header('x-client-ip'));
 
-  return '';
+  if (isTrustedProxy(gatewaySaw)) {
+    const visitor = hops.at(-2);
+    if (visitor && !isTrustedProxy(visitor)) return { ip: visitor, trusted: false };
+
+    // Nothing behind the proxy: an eagle-api pod or another server producer calling APIM itself.
+    return { ip: gatewaySaw, trusted: true };
+  }
+
+  // Somebody calling APIM straight off the internet. Their own address, and the cap applies.
+  if (gatewaySaw) return { ip: gatewaySaw, trusted: false };
+
+  return { ip: hops.at(-1) || '', trusted: false };
+}
+
+/** The resolved address on its own, for a caller that has no use for the trust flag. */
+function clientIp(req) {
+  return resolveCaller(req).ip;
 }
 
 /** The cached file if there is one, otherwise a fresh copy from the blob container. */
@@ -179,6 +210,7 @@ async function geoFields(ip) {
 
 module.exports = {
   clientIp,
+  resolveCaller,
   geoFields,
   isPrivateIp,
   // Test seam. One reader, one real implementation, so no abstraction over it.

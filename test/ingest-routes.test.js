@@ -12,6 +12,8 @@ process.env.AUDIT_SHARED_HEADER_VALUE = 'audit-value-for-tests';
 process.env.ALLOWED_ORIGINS = 'https://eagle-public-test.example.invalid,http://localhost:4200';
 process.env.SESSION_EVENT_CAP = '2';
 process.env.IP_EVENT_CAP = '3';
+// Two of the four addresses the OpenShift cluster calls out from, as deployed.
+process.env.TRUSTED_PROXY_IPS = '142.34.194.121,142.34.194.122';
 
 const assert = require('node:assert');
 const { test, beforeEach } = require('node:test');
@@ -29,6 +31,17 @@ const ORIGIN = { origin: 'https://eagle-public-test.example.invalid' };
 // The proxy in front of this app appends the hop it saw, so the client address is the RIGHT-most
 // entry; everything to its left is what the caller sent.
 const CLIENT = { 'x-forwarded-for': '10.0.0.5, 24.108.0.1' };
+
+// What the real chain puts on a request: the cluster's egress address in X-Client-Ip, stamped by
+// demi-apim-<env>, and APIM's own outbound hop appended after the visitor's by the Functions front
+// end. A browser is the hop before that one; a server producer has no hop of its own.
+const CLUSTER = '142.34.194.121';
+const APIM_HOP = '20.104.10.20';
+
+const throughCluster = (visitor) => ({
+  'x-forwarded-for': visitor ? `${visitor}, ${APIM_HOP}` : APIM_HOP,
+  'x-client-ip': CLUSTER
+});
 
 // Every case here posts to /events, and a request with no X-Forwarded-For shares one `unknown` bucket
 // with every other, so without this the cap one case fills is charged to the next.
@@ -309,6 +322,95 @@ test('a batch past the per-address cap is refused with a Retry-After', async (t)
   );
 });
 
+// eagle-api reaches APIM from the cluster's egress pool, which every browser behind the same cluster
+// also comes out of. Capping that one address refused eagle-api's batches on prod.
+test('a server producer behind the cluster is not capped by address', async (t) => {
+  recordRows(t);
+  geo._setReader(null);
+  t.after(() => geo._reset());
+  sessionCap._reset();
+  t.after(() => sessionCap._reset());
+
+  // IP_EVENT_CAP is 3 above, so a capped caller would be refused from the fourth event on.
+  const answers = [];
+  for (const n of [0, 1, 2, 3, 4]) {
+    const body = { events: [event({ sourceApp: 'eagle-api', sessionId: `server-${n}` })] };
+    const response = await call('POST', '/analytics/events', {
+      headers: { ...GATEWAY, ...throughCluster(null) },
+      body
+    });
+    answers.push(response.status);
+  }
+
+  assert.deepStrictEqual(answers, [202, 202, 202, 202, 202]);
+});
+
+test('two browsers behind the cluster get a budget each', async (t) => {
+  recordRows(t);
+  geo._setReader(null);
+  t.after(() => geo._reset());
+  sessionCap._reset();
+  t.after(() => sessionCap._reset());
+
+  const filling = [0, 1, 2].map((n) => event({ sessionId: `busy-visitor-${n}` }));
+  const first = await call('POST', '/analytics/events', {
+    headers: { ...GATEWAY, ...throughCluster('24.108.0.1') },
+    body: { events: filling }
+  });
+  const second = await call('POST', '/analytics/events', {
+    headers: { ...GATEWAY, ...throughCluster('198.51.100.7') },
+    body: { events: [event({ sessionId: 'quiet-visitor' })] }
+  });
+
+  assert.deepStrictEqual({ first: first.status, second: second.status }, { first: 202, second: 202 });
+});
+
+test('a browser behind the cluster is still capped at its own address', async (t) => {
+  recordRows(t);
+  geo._setReader(null);
+  t.after(() => geo._reset());
+  sessionCap._reset();
+  t.after(() => sessionCap._reset());
+
+  const from = { ...GATEWAY, ...throughCluster('203.0.113.9') };
+  const filling = [0, 1, 2].map((n) => event({ sessionId: `capped-visitor-${n}` }));
+  const first = await call('POST', '/analytics/events', { headers: from, body: { events: filling } });
+  const second = await call('POST', '/analytics/events', {
+    headers: from,
+    body: { events: [event({ sessionId: 'capped-visitor-3' })] }
+  });
+
+  assert.deepStrictEqual(
+    { first: first.status, second: second.status, retryAfter: second.headers['retry-after'] },
+    { first: 202, second: 429, retryAfter: '60' }
+  );
+});
+
+// Every event geolocated to APIM's Toronto address before the visitor hop was read.
+test('a browser behind the cluster is located by its own address, not the gateway hop', async (t) => {
+  const sent = recordRows(t);
+  geo._setReader({
+    get: (ip) => (ip === '24.108.0.1'
+      ? { country: { iso_code: 'CA' }, subdivisions: [{ iso_code: 'BC' }], city: { names: { en: 'Victoria' } } }
+      : { country: { iso_code: 'US' }, city: { names: { en: 'Toronto' } } })
+  });
+  t.after(() => geo._reset());
+
+  const body = { events: [event({ sessionId: 'located-visitor' })] };
+  await call('POST', '/analytics/events', {
+    headers: { ...GATEWAY, ...throughCluster('24.108.0.1') },
+    body
+  });
+  await writer.flush();
+
+  const { row } = sent[0];
+  assert.deepStrictEqual({ Country: row.Country, Region: row.Region, City: row.City }, {
+    Country: 'CA',
+    Region: 'BC',
+    City: 'Victoria'
+  });
+});
+
 const AUDIT_ROW = Object.freeze({
   action: 'project.updated',
   sourceApp: 'eagle-demi',
@@ -379,4 +481,17 @@ test('an audit row reaches the audit stream, with the address it was called from
       Env: 'test'
     }
   );
+});
+
+// The producer, not APIM's outbound hop: an audit trail that names the gateway names nobody.
+test('an audit row from a server producer carries the address the gateway saw', async (t) => {
+  const sent = recordRows(t);
+
+  await call('POST', '/analytics/audit', {
+    headers: { ...GATEWAY, ...AUDIT_HEADER, ...throughCluster(null) },
+    body: { rows: [AUDIT_ROW] }
+  });
+  await writer.flush();
+
+  assert.strictEqual(sent[0].row.SourceIp, CLUSTER);
 });

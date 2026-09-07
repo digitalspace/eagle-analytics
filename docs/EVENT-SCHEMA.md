@@ -18,7 +18,9 @@ comes back only when nothing at all was accepted, or when the envelope itself is
 buffered in the Function and posted to Log Analytics on a timer, so `202` means accepted, not stored.
 
 `POST /events` also answers `429` with `Retry-After: 60` once one client address has sent more than
-`IP_EVENT_CAP` events in a minute. Audit rows are never refused for volume.
+`IP_EVENT_CAP` events in a minute. Server-side producers are exempt: they reach the gateway from the
+OpenShift cluster's egress addresses (`TRUSTED_PROXY_IPS`), which every browser behind the cluster
+shares, so a per-address cap cannot separate them. Audit rows are never refused for volume.
 
 ## What the client sends
 

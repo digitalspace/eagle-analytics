@@ -105,6 +105,13 @@ module.exports = {
   // ceiling is the Function's own (src/ingest/ip-cap.js).
   ipEventCap: intFromEnv('IP_EVENT_CAP', 600, 1),
 
+  // Addresses our own proxies call out from, as APIM reports them in X-Client-Ip: the OpenShift
+  // cluster's egress pool. A request stamped with one of these came through our own infrastructure,
+  // which is what lets src/ingest/enrich-geo.js look one hop further back in X-Forwarded-For for the
+  // visitor instead of geolocating and rate-capping the whole cluster as one caller. Empty trusts no
+  // proxy, so every caller is read as itself and capped.
+  trustedProxyIps: listFromEnv('TRUSTED_PROXY_IPS', ''),
+
   // Read here rather than in src/utils/logger.js, so this file stays the only reader of process.env.
   get nodeEnv() { return process.env.NODE_ENV || ''; },
 
