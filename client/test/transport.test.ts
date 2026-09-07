@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BATCH_SIZE, FLUSH_MS } from '../src/index.js';
-import { MAX_PROPERTIES_BYTES } from '../src/transport.js';
+import { MAX_PROPERTIES_BYTES, trimTrailingSlashes } from '../src/transport.js';
 import { create, destroyAll, mockFetch } from './helpers.js';
 
 /** Properties whose JSON is exactly `bytes` long; the key and quotes around the value cost the rest. */
@@ -140,5 +140,48 @@ describe('oversized properties', () => {
 
     expect(http.types()).toEqual(['Small']);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('event dropped'), { eventType: 'Over Cap' });
+  });
+});
+
+describe('base URL trimming', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+  });
+
+  afterEach(() => {
+    destroyAll();
+  });
+
+  it.each([
+    ['https://ingest.test/analytics', 'https://ingest.test/analytics'],
+    ['https://ingest.test/analytics/', 'https://ingest.test/analytics'],
+    ['https://ingest.test/analytics/////', 'https://ingest.test/analytics'],
+    ['/analytics/', '/analytics'],
+    ['/', ''],
+    ['', ''],
+  ])('trims %s to %s', (input, expected) => {
+    expect(trimTrailingSlashes(input)).toBe(expected);
+  });
+
+  it('finishes fast on long runs of slashes', () => {
+    // The old /\/+$/ needed ~13s on the second string: the run matches, $ fails, and the
+    // engine retries from every offset. A scan is linear, so both land in well under 100ms.
+    const allSlashes = 'https://ingest.test' + '/'.repeat(100_000);
+    const slashesThenText = allSlashes + 'a';
+
+    const started = performance.now();
+    expect(trimTrailingSlashes(allSlashes)).toBe('https://ingest.test');
+    expect(trimTrailingSlashes(slashesThenText)).toBe(slashesThenText);
+    expect(performance.now() - started).toBeLessThan(100);
+  });
+
+  it('posts to a single-slash /events path however the base URL is written', async () => {
+    const http = mockFetch();
+    const analytics = create({ apiUrl: 'https://ingest.test/analytics///', fetch: http.fn });
+
+    analytics.track('Trimmed');
+    await analytics.flush();
+
+    expect(http.batches[0]?.url).toBe('https://ingest.test/analytics/events');
   });
 });
