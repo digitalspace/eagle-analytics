@@ -132,7 +132,9 @@ group needs; the reason is Azure policy, not caution about automation.
 The script needs `APIM_SHARED_HEADER_VALUE`, `AUDIT_SHARED_HEADER_VALUE`, `FRONT_DOOR_ID` and
 `BUDGET_CONTACT_EMAIL` exported in that shell, and `CONFIRM_PROD=yes` for a live prod deploy. The
 param files read all four with no fallback, so a missing export fails the Bicep build instead of
-blanking a live app setting. The two header values are the same strings eagle-demi's APIM deploy
+blanking a live app setting. The script also refuses a value carrying whitespace or a literal
+backslash-n, which is what `export X="$(…)"` and `echo` without `-n` leave behind: the app settings
+would take it verbatim while APIM stamps the clean value, and every request would answer 401. The two header values are the same strings eagle-demi's APIM deploy
 reads — its `azure/main.<env>.bicepparam` takes them from the same variable names, and both estates
 must be deployed with the same values or APIM's forwarded requests are refused. They are held as
 secrets on the eagle-demi `test` GitHub environment; nothing in either repo carries a value.

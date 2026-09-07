@@ -106,13 +106,39 @@ node scripts/import-penguin-history.js --env test --file daily_events_summary.cs
 node scripts/import-penguin-history.js --env test --file daily_events_summary.csv
 ```
 
-Two things to know about imported rows:
+Four things to know about imported rows:
+
+- Only rows whose event name is one the product emits are imported. penguin took the name from the
+  browser and stored it as free text, so its history also holds scanner payloads — JNDI lookups, XXE,
+  SQL — and this script posts to the DCR without passing the `POST /events` validator. The allow-list
+  is `KNOWN_EVENTS` in the script, built from the client's own events plus every `track()` name in
+  eagle-public and eagle-admin. Anything else is dropped, and the run reports how many rows and how
+  many distinct names that cost; `--verbose` lists the names, cut to 40 characters each. On the
+  September 2026 prod export that was 163 rows of 4943, across 150 names.
 
 - `TimeGenerated` is the time of the import, because the Logs Ingestion API rewrites the timestamp on
   anything older than two days. The historical date is in `Day`, which is the column the live rollup
   rule fills too, so charts read both the same way.
 - `page_views` totals a page over all time and carries no day, so its rows land on the day the page
   was last seen. Time series come from `daily_events_summary`.
+- Event names are normalised to the names the client sends, so one chart grouped by `EventName` does
+  not split the same event into a historical series and a live one. penguin let the browser name its
+  own events, so an export holds both forms:
+
+  | penguin `event_type` | `EventName` |
+  |---|---|
+  | `page_view` | `Page Viewed` |
+  | `session_start` | `Session Started` |
+  | `session_end` | `Session Ended` |
+  | `user_active` | `User Active` |
+  | `link_click` | `Link Clicked` |
+  | `button_click` | `Button Clicked` |
+  | `user_identified` | `User Identified` |
+
+  Matching ignores case. A name not in the table is imported unchanged, which is what carries an
+  app-specific event such as `Document Downloaded` over with the name its dashboards already use.
+  Rows from the `page_views` view get `Page Viewed`: the view counts page views and carries no event
+  type of its own.
 
 Confirm the row count matches the CSV, then check a twelve month chart renders.
 

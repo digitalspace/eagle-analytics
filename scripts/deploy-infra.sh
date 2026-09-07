@@ -62,10 +62,22 @@ esac
 REQUIRED_VARS=(APIM_SHARED_HEADER_VALUE AUDIT_SHARED_HEADER_VALUE FRONT_DOOR_ID BUDGET_CONTACT_EMAIL)
 
 for VAR in "${REQUIRED_VARS[@]}"; do
-  if [ -z "${!VAR:-}" ]; then
+  VALUE="${!VAR:-}"
+  if [ -z "$VALUE" ]; then
     echo -e "${RED}✗ ${VAR} is not set. See --help.${NC}" >&2
     exit 2
   fi
+  # `export X="$(...)"` keeps a trailing newline and `echo` without -n leaves a literal backslash-n.
+  # Either travels into the app settings verbatim while APIM stamps the clean value, so every request
+  # 401s and nothing in the deploy output says why. The value is never printed: these are secrets.
+  case "$VALUE" in
+    *[[:space:]]*|*'\n'*)
+      echo -e "${RED}✗ ${VAR} contains whitespace or an escaped newline.${NC}" >&2
+      echo -e "${RED}  Re-export it as a single line: the app settings would take it verbatim while${NC}" >&2
+      echo -e "${RED}  APIM sends the clean value, and every request would answer 401.${NC}" >&2
+      exit 2
+      ;;
+  esac
 done
 
 # readEnvironmentVariable only sees exported variables, so a plain assignment on the caller's line

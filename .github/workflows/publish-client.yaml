@@ -15,7 +15,8 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  # write, not read: the run creates the release for the tag and uploads the build to it.
+  contents: write
   packages: write
 
 defaults:
@@ -57,6 +58,12 @@ jobs:
             echo "Tag $TAG does not match client/package.json version $PACKAGE_VERSION."
             exit 1
           fi
+          # The later steps name the artifact off the version this step just verified, rather than
+          # deriving it again.
+          {
+            echo "VERSION=${PACKAGE_VERSION}"
+            echo "TARBALL=eagle-analytics-client-${PACKAGE_VERSION}.tgz"
+          } >> "$GITHUB_ENV"
 
       - name: Typecheck
         run: yarn typecheck
@@ -74,8 +81,45 @@ jobs:
           YARN_NPM_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: yarn npm publish
 
+      # `client/dist` is gitignored, so the tag on its own carries no build and a copy vendored into
+      # eagle-admin or eagle-public cannot be traced back to a release. The tarball is the release
+      # artifact; SHA256SUMS is what a consumer records next to its vendored copy.
+      #
+      # `yarn pack` rather than `npm pack`: same tarball, and `--out` names it without a rename step.
+      - name: Pack the release assets
+        run: |
+          set -euo pipefail
+          yarn pack --out "$TARBALL"
+          # dist paths are relative to client/, which is also the tarball's `package/` root, so one
+          # file verifies both: `sha256sum -c SHA256SUMS --ignore-missing` beside the download, and
+          # the same from inside the extracted `package/`.
+          {
+            sha256sum "$TARBALL"
+            find dist -type f -print0 | sort -z | xargs -0 sha256sum
+          } > SHA256SUMS
+          {
+            echo "### $TARBALL"
+            echo '```'
+            cat SHA256SUMS
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attach them to the release for this tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --title "$TAG" \
+              --notes "Browser client ${VERSION}. Vendoring and verification: client/README.md."
+          fi
+          gh release upload "$TAG" "$TARBALL" SHA256SUMS --clobber
+
       - name: Report failure to the job summary
         if: failure()
         run: |
           echo "### Client publish failed" >> "$GITHUB_STEP_SUMMARY"
-          echo "Nothing was published. Fix the cause and move the tag, or cut a new one." >> "$GITHUB_STEP_SUMMARY"
+          echo "Check which step failed: the package may have reached GitHub Packages before it." >> "$GITHUB_STEP_SUMMARY"
+          echo "The registry refuses a version it already holds, so a retry needs a new patch version." >> "$GITHUB_STEP_SUMMARY"
