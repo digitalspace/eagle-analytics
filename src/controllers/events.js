@@ -2,7 +2,7 @@
 
 const { EVENTS_STREAM, enqueue } = require('../ingest/dcr-writer');
 const { enrichDevice } = require('../ingest/enrich-device');
-const { clientIp, geoFields } = require('../ingest/enrich-geo');
+const { geoFields, resolveCaller } = require('../ingest/enrich-geo');
 const ipCap = require('../ingest/ip-cap');
 const { allow } = require('../ingest/session-cap');
 const { toEventRow, validateEventBatch } = require('../ingest/validate');
@@ -21,13 +21,17 @@ const { toEventRow, validateEventBatch } = require('../ingest/validate');
  */
 async function events(req, res) {
   // One resolution of the address, used for the cap and then for the location lookup.
-  const ip = clientIp(req);
+  const { ip, trusted } = resolveCaller(req);
 
   // Before validation, deliberately: an address over its cap should not cost this instance the work
   // of parsing what it sent. 429 and not a silent drop, because a refused batch is the producer's to
   // retry.
+  //
+  // Our own server-side producers are exempt: they reach APIM from the cluster's egress pool, which
+  // every browser behind the same cluster also comes out of, so one address cap cannot separate them
+  // and capping it refused eagle-api's batches on prod.
   const offered = Array.isArray(req.body && req.body.events) ? req.body.events.length : 1;
-  if (!ipCap.allow(ip, offered)) {
+  if (!trusted && !ipCap.allow(ip, offered)) {
     res.set('Retry-After', String(ipCap.RETRY_AFTER_SECONDS));
     res.status(429).json({ error: 'Too many events from this address. Retry in a minute.' });
     return;

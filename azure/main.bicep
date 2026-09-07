@@ -42,6 +42,9 @@ param keycloakAllowedClients string = ''
 @description('Front Door\'s own id, from `az afd profile show --query frontDoorId` on the eagle-edge profile. Only on a match is X-Azure-SocketIP trusted over the caller-supplied X-Forwarded-For.')
 param frontDoorId string = ''
 
+@description('Comma list of the addresses our own proxies call out from, as APIM reports them in X-Client-Ip. Decides which requests are read one X-Forwarded-For hop further back for the visitor address, and which server producers are exempt from the per-address event cap. Empty trusts nothing.')
+param trustedProxyIps string = ''
+
 @description('Header name demi-apim-<env> stamps on a forwarded request.')
 param apimSharedHeaderName string = 'X-Analytics-Gateway'
 
@@ -177,6 +180,7 @@ module apiFunctionFlex './modules/api-function-flex.bicep' = {
     auditSharedHeaderValue: auditSharedHeaderValue
     allowedOrigins: allowedOrigins
     frontDoorId: frontDoorId
+    trustedProxyIps: trustedProxyIps
   }
 }
 

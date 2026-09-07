@@ -33,6 +33,11 @@ param keycloakAllowedClients = 'eagle-admin-console'
 // X-Azure-SocketIP is trusted, so a caller who knows it can choose its own client address.
 param frontDoorId = readEnvironmentVariable('FRONT_DOOR_ID')
 
+// The OpenShift cluster's egress pool, measured 2026-09-07 from what APIM stamped in X-Client-Ip. The
+// same four addresses in both environments. Unlike frontDoorId above these are safe in the open: APIM
+// sets X-Client-Ip with `override`, so knowing them does not let a caller claim to be the cluster.
+param trustedProxyIps = '142.34.194.121,142.34.194.122,142.34.194.123,142.34.194.124'
+
 // The two AFD hostnames carry a deploy-time hash and cannot be composed: eagle-public's is in
 // eagle-edge/README.md, eagle-demi-admin's in eagle-demi/azure/main.test.bicepparam. Third is
 // eagle-admin on OpenShift test. Both the apex and the www host serve the public site, same as prod.

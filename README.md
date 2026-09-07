@@ -44,6 +44,17 @@ An event is `{timestamp, eventType, sessionId, sourceApp, userId?, properties?}`
 sent. Everything else is kept in `Detail`. The caller's address is used to look up country, region
 and city, and is then thrown away.
 
+Which address that is takes some care, because APIM is in the way. A browser event travels
+`browser -> OpenShift router -> nginx -> demi-apim-<env> -> Functions front end -> here`. The router
+appends the visitor to `X-Forwarded-For`, APIM adds nothing to that header but stamps the address it
+saw in `X-Client-Ip`, and Azure then appends APIM's own outbound address as the last hop — so the last
+hop is Azure's, not the visitor's. When `X-Client-Ip` is one of the addresses in `TRUSTED_PROXY_IPS`
+the request came through our cluster and the visitor is the hop before the Azure one. With no such hop
+the caller is a server-side producer like eagle-api: it comes out of the same cluster addresses as
+every browser behind it, so it is exempt from the per-address cap, which cannot tell them apart.
+Everyone else is read as their own caller and capped normally. Nothing further left in
+`X-Forwarded-For` is read, because a caller can write what it likes there.
+
 A `POST /query` body names a measure, a bin, a range and optional dimensions and filters. Every one
 is a key into `src/query/schema.js`; no column, table or operator name can come out of a request
 body, and the time range never reaches the query text at all.
@@ -104,6 +115,7 @@ instead of serving an open or a permanently-401 API.
 | `NODE_ENV` | empty | Set to `production` by the Function App, which picks the JSON log format over the readable one |
 | `SESSION_EVENT_CAP` | `2000` | Events one session may contribute per hour per instance; the rest are dropped |
 | `STORAGE_ACCOUNT_NAME` | empty | Holds the GeoLite2 database and the saved dashboards. Empty means no location lookup |
+| `TRUSTED_PROXY_IPS` | empty | Comma list of the addresses our own proxies call out from, as APIM reports them in `X-Client-Ip`. Decides which requests are read one `X-Forwarded-For` hop further back for the visitor, and which producers are exempt from the per-address cap. Empty trusts nothing |
 
 `ALLOWED_SOURCE_APPS`, `SESSION_EVENT_CAP` and `IP_EVENT_CAP` are readable but unset by the template:
 `src/config.js` owns those defaults, and a second copy in the Bicep would drift from it.
