@@ -126,5 +126,44 @@ Pushing the tag runs `.github/workflows/publish-client.yaml`: it compares the ta
 `package.json` and stops there if they disagree, then typechecks, tests, builds and publishes to
 GitHub Packages. The run's own `GITHUB_TOKEN` is the only credential.
 
+It then creates the GitHub release for the tag, if it does not exist yet, and attaches two files:
+
+| Asset | What it is |
+|---|---|
+| `eagle-analytics-client-X.Y.Z.tgz` | `yarn pack` of `client/`: `package.json`, `README.md` and the built `dist/`. |
+| `SHA256SUMS` | Checksum of the tarball, and of each file in `dist/`. |
+
+`dist/` is gitignored, so the tag alone carries no build. The release assets are the only thing that
+ties a vendored copy to a version.
+
 The registry will not accept a version it already holds, so a bad publish needs a new patch version
 rather than a moved tag.
+
+## Vendoring
+
+`eagle-admin` and `eagle-public` do not install from GitHub Packages. They keep a copy under
+`vendor/eagle-analytics-client/` and depend on the directory, so no token is involved. Take a new
+version from the release, not from a local build. Nobody else can check a local build.
+
+```sh
+VERSION=0.1.0
+gh release download "client-v${VERSION}" -R digitalspace/eagle-analytics \
+  -p "eagle-analytics-client-${VERSION}.tgz" -p SHA256SUMS
+
+# Fails loudly if the tarball is not the one the release run built.
+sha256sum -c SHA256SUMS --ignore-missing
+
+tar -xzf "eagle-analytics-client-${VERSION}.tgz"      # extracts to package/
+( cd package && sha256sum -c ../SHA256SUMS --ignore-missing )   # checks each dist file
+```
+
+Then, in the consumer repository:
+
+1. Replace `vendor/eagle-analytics-client/` with `package/`'s `dist/`, `package.json` and
+   `README.md`.
+2. Record the tag and the tarball's sha256 in that directory's `README.md`, so the next person can
+   tell which release the checked-in `dist/` came from without rebuilding it.
+3. Run `yarn install` and commit.
+
+Nothing else needs changing: the dependency stays
+`"@digitalspace/eagle-analytics-client": "file:./vendor/eagle-analytics-client"`.

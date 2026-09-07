@@ -28,7 +28,11 @@ import-penguin-history.js --env <dev|test|prod> --file <csv> [--file <csv>…] [
   --env       value of the Env column on every imported row.
   --file      CSV exported from the penguin view daily_events_summary or page_views. Repeatable.
   --dry-run   parse and map, print the counts, post nothing.
+  --verbose   also list the event names that were dropped, and how many rows each cost.
   --help      this text.
+
+  Only rows whose event name is one this product emits are imported: penguin stored the name the
+  browser sent, so its history also holds scanner payloads. --verbose says what was left behind.
 
   EVENTS_DCR_ENDPOINT and EVENTS_DCR_IMMUTABLE_ID name the target rule; deploy-infra.sh prints both.
   Authentication is DefaultAzureCredential, and the caller needs Monitoring Metrics Publisher on the
@@ -114,6 +118,75 @@ function textField(record, field) {
   return String(record[field] === undefined ? '' : record[field]).trim();
 }
 
+/** The name the client sends for a page view. docs/EVENT-SCHEMA.md is the contract for all of them. */
+const PAGE_VIEWED = 'Page Viewed';
+
+/**
+ * penguin let the browser name its own events, so an export holds both the display names the client
+ * now sends and older snake_case ones. Keys are lower-cased; a name nobody listed is carried through
+ * as it stands, so an app-specific event keeps the name its dashboards already use.
+ */
+const EVENT_NAMES = new Map([
+  ['page_view', PAGE_VIEWED],
+  ['session_start', 'Session Started'],
+  ['session_end', 'Session Ended'],
+  ['user_active', 'User Active'],
+  ['link_click', 'Link Clicked'],
+  ['link_clicked', 'Link Clicked'],
+  ['button_click', 'Button Clicked'],
+  ['user_identified', 'User Identified']
+]);
+
+const eventName = (raw) => EVENT_NAMES.get(raw.toLowerCase()) || raw;
+
+/**
+ * Event names this product actually emits: the ones the client sends by itself, plus every literal
+ * passed to `track()` in eagle-public and eagle-admin.
+ *
+ * penguin took the event name from the browser and stored it as free text, so its history also holds
+ * scanner payloads — JNDI lookups, XXE, SQL — that a chart would show as event names and that no
+ * validator ran on, because this script posts to the DCR rather than through POST /events. Anything
+ * not named here is dropped rather than imported. Compared lower-cased.
+ */
+const KNOWN_EVENTS = new Set([
+  ...EVENT_NAMES.values(),
+  'Bulk Download Failed',
+  'Bulk Download Ready',
+  'Bulk Download Started',
+  'CAC Signup Completed',
+  'Comment Modal Become Member Clicked',
+  'Comment Modal CAC Learn More Clicked',
+  'Comment Modal Dismissed',
+  'Comment Modal Opened',
+  'Comment Period Banner Clicked',
+  'Comment Submitted',
+  'Document Downloaded',
+  'Document Filters Applied',
+  'Document Filters Panel Toggled',
+  'Document Opened',
+  'File Upload Attempted',
+  'File Upload Failed',
+  'File Upload Removed',
+  'Filters Cleared',
+  'Filters Panel Toggled',
+  'Map Base Layer Changed',
+  'Map Marker Clicked',
+  'Map Overlay Toggled',
+  'Map Reset View Clicked',
+  'News Item Clicked',
+  'Page Size Changed',
+  'Pagination Changed',
+  'Project Filters Applied',
+  'Project Filters Cleared',
+  'Project Filters Panel Toggled',
+  'Project Tab Clicked',
+  'Project Viewed',
+  'Projects View Changed',
+  'Search Executed',
+  'Search Help Clicked',
+  'Table Column Sorted'
+].map((name) => name.toLowerCase()));
+
 /**
  * One EagleEventsDaily_CL row. ProjectId, Country and DeviceType are empty because penguin's rollups
  * carried no such dimension — a chart grouped by them shows imported history as one blank bucket.
@@ -142,7 +215,7 @@ const SHAPES = [
     map: (record, env, now) => rollupRow({
       day: dayField(record, 'day'),
       sourceApp: textField(record, 'source_app'),
-      eventName: textField(record, 'event_type'),
+      eventName: eventName(textField(record, 'event_type')),
       page: '',
       events: countField(record, 'event_count'),
       sessions: countField(record, 'unique_sessions'),
@@ -157,8 +230,8 @@ const SHAPES = [
     map: (record, env, now) => rollupRow({
       day: dayField(record, 'last_viewed'),
       sourceApp: textField(record, 'source_app'),
-      // penguin's own event type, kept so imported rows and its dashboards agree.
-      eventName: 'page_view',
+      // The view counts page views and carries no event type of its own.
+      eventName: PAGE_VIEWED,
       page: textField(record, 'page_path'),
       events: countField(record, 'total_views'),
       sessions: countField(record, 'unique_sessions'),
@@ -172,7 +245,8 @@ const SHAPES = [
  *
  * @param {string} text CSV with a header row, as `\copy … csv header` writes it.
  * @param {{env: string, now?: Date}} options
- * @returns {{view: string, rows: object[]}}
+ * @returns {{view: string, rows: object[], dropped: Map<string, number>}} dropped counts rows per
+ *   event name that is not a known product event.
  */
 function toDailyRows(text, { env, now = new Date() }) {
   const rows = records(text);
@@ -189,7 +263,16 @@ function toDailyRows(text, { env, now = new Date() }) {
   }
 
   const stamp = now.toISOString();
-  return { view: shape.view, rows: rows.map((record) => shape.map(record, env, stamp)) };
+  const kept = [];
+  const dropped = new Map();
+
+  for (const record of rows) {
+    const row = shape.map(record, env, stamp);
+    if (KNOWN_EVENTS.has(row.EventName.toLowerCase())) kept.push(row);
+    else dropped.set(row.EventName, (dropped.get(row.EventName) || 0) + 1);
+  }
+
+  return { view: shape.view, rows: kept, dropped };
 }
 
 /** A flag's value. A missing one shows up as the next flag, which would be read as a file name. */
@@ -200,13 +283,14 @@ function value(argv, index, flag) {
 }
 
 function parseArgs(argv) {
-  const args = { env: '', files: [], dryRun: false, help: false };
+  const args = { env: '', files: [], dryRun: false, verbose: false, help: false };
 
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     if (flag === '--env') args.env = value(argv, index += 1, flag);
     else if (flag === '--file') args.files.push(value(argv, index += 1, flag));
     else if (flag === '--dry-run') args.dryRun = true;
+    else if (flag === '--verbose') args.verbose = true;
     else if (flag === '--help' || flag === '-h') args.help = true;
     else throw new Error(`unknown argument '${flag}'`);
   }
@@ -241,15 +325,39 @@ async function main(argv) {
   }
 
   const rows = [];
+  const dropped = new Map();
+
   for (const file of args.files) {
-    const { view, rows: mapped } = toDailyRows(fs.readFileSync(file, 'utf8'), { env: args.env });
-    logger.info(`[import] ${file}: ${mapped.length} row(s) from ${view}`);
-    rows.push(...mapped);
+    const parsed = toDailyRows(fs.readFileSync(file, 'utf8'), { env: args.env });
+    logger.info(`[import] ${file}: ${parsed.rows.length} row(s) from ${parsed.view}`);
+    // Not push(...parsed.rows): a spread passes one argument per row, and a 330k-row page_views
+    // export overflows the call stack.
+    for (const row of parsed.rows) rows.push(row);
+    for (const [name, count] of parsed.dropped) dropped.set(name, (dropped.get(name) || 0) + count);
   }
 
   const days = new Set(rows.map((row) => row.Day));
   const events = rows.reduce((total, row) => total + row.Events, 0);
   logger.info(`[import] ${rows.length} row(s), ${days.size} day(s), ${events} event(s), Env=${args.env}`);
+
+  if (dropped.size > 0) {
+    const rowsDropped = [...dropped.values()].reduce((total, count) => total + count, 0);
+    logger.warn(`[import] dropped ${rowsDropped} row(s) with unknown event name, ${dropped.size} distinct`);
+    if (args.verbose) {
+      // Truncated: these are whatever a scanner posted, and a 99-character payload in an operator's
+      // terminal is noise at best. Control characters go first: a name holding a newline would
+      // otherwise forge a log line of its own, indistinguishable from one this script wrote.
+      for (const [name, count] of dropped) {
+        const safe = [...name]
+          .map((ch) => { const c = ch.codePointAt(0); return c < 0x20 || c === 0x7f ? '?' : ch; })
+          .join('')
+          .slice(0, 40);
+        logger.warn(`[import]   ${safe} (${count} row(s))`);
+      }
+    } else {
+      logger.warn('[import] --verbose lists them.');
+    }
+  }
 
   if (args.dryRun) {
     logger.info('[import] dry run, nothing posted.');
@@ -270,4 +378,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { parseCsv, toDailyRows, parseArgs };
+module.exports = { parseCsv, toDailyRows, parseArgs, main };
