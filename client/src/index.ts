@@ -1,7 +1,13 @@
 import { browserContext } from './context.js';
 import { clearSession, readSession, type Session } from './session.js';
 import { trafficSource } from './traffic.js';
-import { cleanProperties, createTransport, MAX_PROPERTIES_BYTES, normalizeEventType } from './transport.js';
+import {
+  cleanProperties,
+  createTransport,
+  MAX_PROPERTIES_BYTES,
+  normalizeEventType,
+  trimTrailingSlashes,
+} from './transport.js';
 
 export interface AnalyticsConfig {
   /** Ingest base URL or path; events are posted to `${apiUrl}/events`. Empty disables tracking. */
@@ -59,7 +65,7 @@ export function createAnalytics(config: AnalyticsConfig): Analytics {
   };
 
   const transport = createTransport({
-    url: `${config.apiUrl.replace(/\/+$/, '')}/events`,
+    url: `${trimTrailingSlashes(config.apiUrl)}/events`,
     batchSize: BATCH_SIZE,
     doFetch: config.fetch ?? ((input, init) => globalThis.fetch(input, init)),
     onError: (err) => log('send failed', err),

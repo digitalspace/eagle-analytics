@@ -23,6 +23,16 @@ export interface Transport {
   size: () => number;
 }
 
+/**
+ * Drops trailing slashes from a base URL. A scan, not `/\/+$/`: on a long run of
+ * slashes that regex backtracks quadratically (CodeQL js/polynomial-redos).
+ */
+export function trimTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url[end - 1] === '/') end -= 1;
+  return url.slice(0, end);
+}
+
 export function normalizeEventType(eventType: string | undefined): string {
   return eventType?.trim().substring(0, 100) || 'unknown';
 }

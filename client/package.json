@@ -1,6 +1,6 @@
 {
   "name": "@digitalspace/eagle-analytics-client",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Browser client for the EPIC analytics ingest API. No runtime dependencies.",
   "license": "Apache-2.0",
   "type": "module",
