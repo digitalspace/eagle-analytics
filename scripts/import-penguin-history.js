@@ -345,8 +345,15 @@ async function main(argv) {
     logger.warn(`[import] dropped ${rowsDropped} row(s) with unknown event name, ${dropped.size} distinct`);
     if (args.verbose) {
       // Truncated: these are whatever a scanner posted, and a 99-character payload in an operator's
-      // terminal is noise at best.
-      for (const [name, count] of dropped) logger.warn(`[import]   ${name.slice(0, 40)} (${count} row(s))`);
+      // terminal is noise at best. Control characters go first: a name holding a newline would
+      // otherwise forge a log line of its own, indistinguishable from one this script wrote.
+      for (const [name, count] of dropped) {
+        const safe = [...name]
+          .map((ch) => { const c = ch.codePointAt(0); return c < 0x20 || c === 0x7f ? '?' : ch; })
+          .join('')
+          .slice(0, 40);
+        logger.warn(`[import]   ${safe} (${count} row(s))`);
+      }
     } else {
       logger.warn('[import] --verbose lists them.');
     }

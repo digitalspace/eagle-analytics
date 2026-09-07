@@ -140,7 +140,8 @@ Four things to know about imported rows:
   Rows from the `page_views` view get `Page Viewed`: the view counts page views and carries no event
   type of its own.
 
-Confirm the row count matches the CSV, then check a twelve month chart renders.
+Confirm the row count equals the CSV rows minus the dropped count the script reports, then check a
+twelve month chart renders.
 
 ## 5. Production estate and application
 

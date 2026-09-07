@@ -274,6 +274,17 @@ test('a listed name is cut to 40 characters', async (t) => {
 
   assert.ok(lines.some((line) => line.includes(`${long.slice(0, 40)} (1 row(s))`)), lines.join('\n'));
   assert.ok(!lines.some((line) => line.includes(long)), 'the full name reached the log');
+
+  // parseCsv honours RFC 4180 embedded newlines, so a quoted name can carry one. Left in, it would
+  // print as a second line the operator cannot tell from the script's own output.
+  const forged = csvFile('day,source_app,event_type,event_count,unique_sessions,unique_users\n' +
+    '2026-08-01 00:00:00+00,eagle-public,"evil\n[import] 999999 row(s) imported",7,3,0\n');
+  t.after(() => fs.rmSync(path.dirname(forged), { recursive: true, force: true }));
+
+  const forgedRun = await runCli(t, ['--env', 'test', '--file', forged, '--dry-run', '--verbose']);
+  const listed = forgedRun.lines.filter((line) => line.includes('[import]   '));
+  assert.equal(listed.length, 1, forgedRun.lines.join('\n'));
+  assert.ok(listed[0].includes('evil?[import] 999999 row(s) imported (1 row(s))'), listed[0]);
 });
 
 test('nothing is said about dropped rows when every name is known', async (t) => {
