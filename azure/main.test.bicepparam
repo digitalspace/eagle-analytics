@@ -43,8 +43,10 @@ param trustedProxyIps = '142.34.194.121,142.34.194.122,142.34.194.123,142.34.194
 // eagle-admin on OpenShift test. Both the apex and the www host serve the public site, same as prod.
 // localhost is a developer running an admin app against the deployed gateway, and is deliberately
 // absent from prod.
+// eagle-public React preview (next site).
 param allowedOrigins = [
   'https://eagle-public-test-dbg8ghh8gjd0bscx.a02.azurefd.net'
+  'https://eagle-public-next-test-gtaqa6dvexc6edhg.a02.azurefd.net'
   'https://demi-admin-test-hbf7cfh7ggfhf4gf.a02.azurefd.net'
   'https://eagle-test.apps.silver.devops.gov.bc.ca'
   'https://test.projects.eao.gov.bc.ca'
