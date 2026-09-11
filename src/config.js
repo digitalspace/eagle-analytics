@@ -31,8 +31,24 @@ function listFromEnv(name, fallback) {
 // ENVIRONMENT, and only ENVIRONMENT: it is what the Bicep template sets. Labels every row.
 const environmentName = process.env.ENVIRONMENT || 'dev';
 
-const apimSharedHeaderValue = process.env.APIM_SHARED_HEADER_VALUE || '';
-const auditSharedHeaderValue = process.env.AUDIT_SHARED_HEADER_VALUE || '';
+// App Service passes the literal '@Microsoft.KeyVault(SecretUri=…)' string through as the value when
+// it cannot read the secret. Every part of that string is public — the vault and secret names are in
+// azure/ — so a non-empty check alone would accept a credential anyone can reconstruct.
+const KEY_VAULT_REFERENCE = /^@Microsoft\.KeyVault\(/i;
+
+/** Secret settings left holding an unresolved Key Vault reference. */
+const unresolvedSecrets = [];
+
+/** A secret app setting. An unresolved Key Vault reference reads as unset. */
+function secretFromEnv(name) {
+  const raw = (process.env[name] || '').trim();
+  if (!KEY_VAULT_REFERENCE.test(raw)) return raw;
+  unresolvedSecrets.push(name);
+  return '';
+}
+
+const apimSharedHeaderValue = secretFromEnv('APIM_SHARED_HEADER_VALUE');
+const auditSharedHeaderValue = secretFromEnv('AUDIT_SHARED_HEADER_VALUE');
 
 // azure/modules/api-function-flex.bicep deploys each of these as an app setting and documents an
 // empty one as local development only. Refusing to load without them is what makes that
@@ -47,6 +63,13 @@ if (environmentName !== 'dev') {
     ANALYTICS_WORKSPACE_CUSTOMER_ID: process.env.ANALYTICS_WORKSPACE_CUSTOMER_ID
   };
   for (const [name, value] of Object.entries(required)) {
+    if (unresolvedSecrets.includes(name)) {
+      throw new Error(
+        `${name} did not resolve: its Key Vault reference was passed through as the value. Check the ` +
+        "Function's Key Vault reference identity, its role assignment on the vault, and the app's " +
+        'network path to the vault.'
+      );
+    }
     if (!value) throw new Error(`${name} is required when ENVIRONMENT is '${environmentName}'.`);
   }
 

@@ -48,13 +48,16 @@ param trustedProxyIps string = ''
 @description('Header name demi-apim-<env> stamps on a forwarded request.')
 param apimSharedHeaderName string = 'X-Analytics-Gateway'
 
-@description('Value of that header, shared with the APIM policy. Sourced from the environment by the param files — never a literal, this repository is public.')
-@secure()
-param apimSharedHeaderValue string = ''
+@description('Name of the EXISTING Key Vault holding both header values: demi-kv-<env>, owned by eagle-demi. Values are set once by hand from the devbox; no deployment writes them.')
+param keyVaultName string
 
-@description('Value of the X-Analytics-Audit header the keyed analytics-machine product stamps, guarding POST /audit on its own. Empty = local development only, src/config.js refuses to boot test or prod on it.')
-@secure()
-param auditSharedHeaderValue string = ''
+@description('Resource group holding that vault. Defaults to this deployment\'s group, which is right for test. Production\'s vault sits in rg-demi-prod while this deployment targets rg-eagle-public-prod, so prod passes it.')
+param keyVaultResourceGroup string = resourceGroup().name
+
+// Landing-zone networking, not ours: the subnet lives in c4b0a8-<env>-networking and is created by
+// the platform team. No default — an app deployed without it cannot read either header value.
+@description('Existing subnet delegated to Microsoft.App/environments that the Function App integrates with. Required: the vault holding both header values only answers from inside the VNet.')
+param vnetSubnetId string
 
 @description('Origins POST /events accepts a browser request from. A request with no Origin header is a server-side producer and is allowed; empty refuses every browser Origin.')
 param allowedOrigins array = []
@@ -117,6 +120,18 @@ resource demiAuditWorkspace 'Microsoft.OperationalInsights/workspaces@2023-09-01
 // role-assignment resource names, and a resource name cannot contain a runtime value.
 var analyticsWorkspaceName = 'analytics-logs-${environmentName}'
 
+// Versionless secret URIs, composed rather than read off the vault: the App Service resolver follows
+// a versionless URI to the current version on its own, and composing means the deployment needs no
+// data-plane read on a vault that only answers from inside the VNet.
+// Fixed on both sides: the same two names carry these values as APIM named values on
+// demi-apim-<env>. Nothing varies them per environment, so they are not parameters.
+var apimSharedHeaderSecretName = 'analytics-shared-header'
+var auditSharedHeaderSecretName = 'analytics-audit-header'
+
+var vaultUri = 'https://${keyVaultName}${environment().suffixes.keyvaultDns}'
+var apimSharedHeaderSecretUri = '${vaultUri}/secrets/${apimSharedHeaderSecretName}'
+var auditSharedHeaderSecretUri = '${vaultUri}/secrets/${auditSharedHeaderSecretName}'
+
 var localWorkspaceNames = union(
   [ analyticsWorkspaceName ],
   (eagleLogsSubscriptionId == subscription().subscriptionId && eagleLogsResourceGroup == resourceGroup().name) ? [ eagleLogsName ] : [],
@@ -131,6 +146,18 @@ module identity './modules/identity.bicep' = {
     location: location
     environmentName: environmentName
     tags: defaultTags
+  }
+}
+
+// 1b. Read rights on the vault, before anything that resolves a secret from it. A role assignment
+// only lands in the group the deployment targets, so a vault in another group takes its own module
+// scoped there — which is prod's case.
+module keyVaultAccess './modules/key-vault-access.bicep' = {
+  name: 'deploy-key-vault-access'
+  scope: resourceGroup(keyVaultResourceGroup)
+  params: {
+    keyVaultName: keyVaultName
+    principalId: identity.outputs.principalId
   }
 }
 
@@ -157,10 +184,14 @@ module analyticsLogs './modules/event-logs.bicep' = {
 // 3. The API. After the store, because it takes the DCR endpoint and the workspace GUID as settings.
 module apiFunctionFlex './modules/api-function-flex.bicep' = {
   name: 'deploy-api-function-flex'
+  // Nothing in the params links the two, and an app that starts before the grant exists reads an
+  // empty header value and refuses to boot.
+  dependsOn: [ keyVaultAccess ]
   params: {
     location: location
     environmentName: environmentName
     tags: defaultTags
+    virtualNetworkSubnetId: vnetSubnetId
     identityId: identity.outputs.identityId
     identityClientId: identity.outputs.clientId
     identityPrincipalId: identity.outputs.principalId
@@ -176,8 +207,8 @@ module apiFunctionFlex './modules/api-function-flex.bicep' = {
     keycloakRealm: keycloakRealm
     keycloakAllowedClients: keycloakAllowedClients
     apimSharedHeaderName: apimSharedHeaderName
-    apimSharedHeaderValue: apimSharedHeaderValue
-    auditSharedHeaderValue: auditSharedHeaderValue
+    apimSharedHeaderSecretUri: apimSharedHeaderSecretUri
+    auditSharedHeaderSecretUri: auditSharedHeaderSecretUri
     allowedOrigins: allowedOrigins
     frontDoorId: frontDoorId
     trustedProxyIps: trustedProxyIps

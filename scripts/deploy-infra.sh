@@ -9,15 +9,15 @@ deploy-infra.sh <test|prod> [--what-if|--live]
 
   test defaults to --live, prod defaults to --what-if.
 
-  All four below are required. The param files read them from the environment with no
+  Both below are required. The param files read them from the environment with no
   fallback, so a missing export fails the build rather than blanking the live setting.
 
-  APIM_SHARED_HEADER_VALUE   the secret demi-apim-<env> stamps on a forwarded request.
-  AUDIT_SHARED_HEADER_VALUE  the secret the keyed analytics-machine product stamps on
-                             what it forwards to POST /audit.
   FRONT_DOOR_ID              the eagle-edge profile's own id, which decides whether
                              X-Azure-SocketIP is trusted as the client address.
   BUDGET_CONTACT_EMAIL       address the budget thresholds notify.
+
+  The two header values are no longer exported here: they are read from demi-kv-<env>
+  by the Function itself. See README "The estate".
 
   CONFIRM_PROD=yes           required for prod --live.
   WHATIF_BEFORE_LIVE=1       run a what-if before a --live deploy, in the same output. Off by
@@ -59,7 +59,7 @@ case "$ENVIRONMENT" in
     ;;
 esac
 
-REQUIRED_VARS=(APIM_SHARED_HEADER_VALUE AUDIT_SHARED_HEADER_VALUE FRONT_DOOR_ID BUDGET_CONTACT_EMAIL)
+REQUIRED_VARS=(FRONT_DOOR_ID BUDGET_CONTACT_EMAIL)
 
 for VAR in "${REQUIRED_VARS[@]}"; do
   VALUE="${!VAR:-}"
@@ -68,13 +68,13 @@ for VAR in "${REQUIRED_VARS[@]}"; do
     exit 2
   fi
   # `export X="$(...)"` keeps a trailing newline and `echo` without -n leaves a literal backslash-n.
-  # Either travels into the app settings verbatim while APIM stamps the clean value, so every request
-  # 401s and nothing in the deploy output says why. The value is never printed: these are secrets.
+  # Either travels into the app settings verbatim, and a Front Door id that does not match what the
+  # edge sends makes the app read the caller's own address as the visitor's. Values are not printed.
   case "$VALUE" in
     *[[:space:]]*|*'\n'*)
       echo -e "${RED}✗ ${VAR} contains whitespace or an escaped newline.${NC}" >&2
-      echo -e "${RED}  Re-export it as a single line: the app settings would take it verbatim while${NC}" >&2
-      echo -e "${RED}  APIM sends the clean value, and every request would answer 401.${NC}" >&2
+      echo -e "${RED}  Re-export it as a single line: the app settings take it verbatim, and no${NC}" >&2
+      echo -e "${RED}  request would ever match it.${NC}" >&2
       exit 2
       ;;
   esac

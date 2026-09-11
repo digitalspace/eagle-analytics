@@ -80,3 +80,40 @@ test('TRUSTED_PROXY_IPS is read as a trimmed list', () => {
 test('an unset TRUSTED_PROXY_IPS trusts no proxy', () => {
   assert.deepStrictEqual(loadConfig({ ENVIRONMENT: 'test' }).trustedProxyIps, []);
 });
+
+// App Service passes the reference string through as the value when it cannot read the secret, and
+// that string is public: the vault and secret names live in azure/. A non-empty check alone would let
+// it become the value the header guards compare against.
+const UNRESOLVED_REFERENCE =
+  '@Microsoft.KeyVault(SecretUri=https://demi-kv-test.vault.azure.net/secrets/analytics-shared-header)';
+
+for (const setting of ['APIM_SHARED_HEADER_VALUE', 'AUDIT_SHARED_HEADER_VALUE']) {
+  test(`${setting} left holding its Key Vault reference fails the load`, () => {
+    assert.throws(
+      () => loadConfig({ ENVIRONMENT: 'test', [setting]: UNRESOLVED_REFERENCE }),
+      new RegExp(`${setting} did not resolve`)
+    );
+  });
+
+  // App Service does not case the prefix consistently, and a setting can arrive padded.
+  test(`${setting} holding a padded, differently cased reference fails the load too`, () => {
+    assert.throws(
+      () => loadConfig({ ENVIRONMENT: 'test', [setting]: '  @microsoft.keyvault(SecretUri=x)  ' }),
+      /did not resolve/
+    );
+  });
+}
+
+test('an unresolved reference in dev reads as unset rather than as a value', () => {
+  const config = loadConfig({ ENVIRONMENT: 'dev', APIM_SHARED_HEADER_VALUE: UNRESOLVED_REFERENCE });
+
+  assert.strictEqual(config.apimSharedHeaderValue, '');
+  assert.strictEqual(config.guardsDisabled, true);
+});
+
+test('a resolved secret is still read, with surrounding whitespace dropped', () => {
+  const config = loadConfig({ ENVIRONMENT: 'test', APIM_SHARED_HEADER_VALUE: '  a-real-value  ' });
+
+  assert.strictEqual(config.apimSharedHeaderValue, 'a-real-value');
+  assert.strictEqual(config.guardsDisabled, false);
+});
