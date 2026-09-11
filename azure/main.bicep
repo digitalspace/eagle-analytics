@@ -54,11 +54,10 @@ param keyVaultName string
 @description('Resource group holding that vault. Defaults to this deployment\'s group, which is right for test. Production\'s vault sits in rg-demi-prod while this deployment targets rg-eagle-public-prod, so prod passes it.')
 param keyVaultResourceGroup string = resourceGroup().name
 
-@description('Vault secret holding the value of the gateway header, shared with the APIM policy.')
-param apimSharedHeaderSecretName string = 'analytics-shared-header'
-
-@description('Vault secret holding the value of the X-Analytics-Audit header the keyed analytics-machine product stamps, guarding POST /audit on its own.')
-param auditSharedHeaderSecretName string = 'analytics-audit-header'
+// Landing-zone networking, not ours: the subnet lives in c4b0a8-<env>-networking and is created by
+// the platform team. No default — an app deployed without it cannot read either header value.
+@description('Existing subnet delegated to Microsoft.App/environments that the Function App integrates with. Required: the vault holding both header values only answers from inside the VNet.')
+param vnetSubnetId string
 
 @description('Origins POST /events accepts a browser request from. A request with no Origin header is a server-side producer and is allowed; empty refuses every browser Origin.')
 param allowedOrigins array = []
@@ -124,6 +123,11 @@ var analyticsWorkspaceName = 'analytics-logs-${environmentName}'
 // Versionless secret URIs, composed rather than read off the vault: the App Service resolver follows
 // a versionless URI to the current version on its own, and composing means the deployment needs no
 // data-plane read on a vault that only answers from inside the VNet.
+// Fixed on both sides: the same two names carry these values as APIM named values on
+// demi-apim-<env>. Nothing varies them per environment, so they are not parameters.
+var apimSharedHeaderSecretName = 'analytics-shared-header'
+var auditSharedHeaderSecretName = 'analytics-audit-header'
+
 var vaultUri = 'https://${keyVaultName}${environment().suffixes.keyvaultDns}'
 var apimSharedHeaderSecretUri = '${vaultUri}/secrets/${apimSharedHeaderSecretName}'
 var auditSharedHeaderSecretUri = '${vaultUri}/secrets/${auditSharedHeaderSecretName}'
@@ -187,6 +191,7 @@ module apiFunctionFlex './modules/api-function-flex.bicep' = {
     location: location
     environmentName: environmentName
     tags: defaultTags
+    virtualNetworkSubnetId: vnetSubnetId
     identityId: identity.outputs.identityId
     identityClientId: identity.outputs.clientId
     identityPrincipalId: identity.outputs.principalId

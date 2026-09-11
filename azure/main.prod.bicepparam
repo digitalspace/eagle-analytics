@@ -64,6 +64,12 @@ param alertActionGroupId = '/subscriptions/be5924ac-1083-4a1b-be92-7b444882cfd9/
 param keyVaultName = 'demi-kv-prod'
 param keyVaultResourceGroup = 'rg-demi-prod'
 
+// snet-demi-func-fc1-prod, in c4b0a8-prod-networking — a different resource group again, which a
+// subnet id carries on its own. Same subscription as this deployment, and the same subnet
+// demi-api-fc-prod integrates with (eagle-demi/azure/main.prod.bicepparam). Same /27 capacity note
+// as test applies.
+param vnetSubnetId = '/subscriptions/be5924ac-1083-4a1b-be92-7b444882cfd9/resourceGroups/c4b0a8-prod-networking/providers/Microsoft.Network/virtualNetworks/c4b0a8-prod-vwan-spoke/subnets/snet-demi-func-fc1-prod'
+
 param contactEmails = [ readEnvironmentVariable('BUDGET_CONTACT_EMAIL') ]
 
 // Estimated run rate is about 17 CAD/month; the same 60 as test, because the guard is sized to catch

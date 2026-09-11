@@ -161,7 +161,12 @@ az keyvault secret set --vault-name demi-kv-<env> --name analytics-audit-header 
 
 The deploy grants the analytics identity Key Vault Secrets User on that vault and writes the app
 settings as versionless `@Microsoft.KeyVault(SecretUri=…)` references, so no value passes through
-Bicep, a param file or a deployment record. The same two values back the `analytics-shared-header` and
+Bicep, a param file or a deployment record. The vault has public network access disabled, and App
+Service resolves a reference over the app's own outbound path rather than as a trusted service, so
+the Function App integrates with `snet-demi-func-fc1-<env>` — the landing-zone subnet delegated to
+`Microsoft.App/environments` that `demi-api-fc-<env>` already uses. `vnetSubnetId` in the param files
+names it, and has no default: without it both header settings resolve to nothing and every guarded
+route answers 401. The same two values back the `analytics-shared-header` and
 `analytics-audit-header` named values on `demi-apim-<env>`; both sides must read the same value or
 APIM's forwarded requests are refused. Rotating means setting a new version in the vault, then
 stopping and starting the Function App — a reference is cached for up to 24 hours, and Flex

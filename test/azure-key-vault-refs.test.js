@@ -76,14 +76,14 @@ test('the audit header app setting is a Key Vault reference, not a value', { ski
 test('the gateway secret URI is versionless', { skip: noAzureCli }, () => {
   assert.strictEqual(
     template.variables.apimSharedHeaderSecretUri,
-    "[format('{0}/secrets/{1}', variables('vaultUri'), parameters('apimSharedHeaderSecretName'))]"
+    "[format('{0}/secrets/{1}', variables('vaultUri'), variables('apimSharedHeaderSecretName'))]"
   );
 });
 
 test('the audit secret URI is versionless', { skip: noAzureCli }, () => {
   assert.strictEqual(
     template.variables.auditSharedHeaderSecretUri,
-    "[format('{0}/secrets/{1}', variables('vaultUri'), parameters('auditSharedHeaderSecretName'))]"
+    "[format('{0}/secrets/{1}', variables('vaultUri'), variables('auditSharedHeaderSecretName'))]"
   );
 });
 
@@ -103,6 +103,31 @@ test('the app resolves its Key Vault references with the identity attached to it
   assert.deepStrictEqual(Object.keys(site.identity.userAssignedIdentities), [
     "[format('{0}', parameters('identityId'))]"
   ]);
+});
+
+// demi-kv-<env> is publicNetworkAccess=Disabled, and App Service resolves a reference over the app's
+// own outbound path rather than as a trusted service. With no subnet both header settings resolve to
+// nothing and every guarded route answers 401.
+test('the app integrates with the subnet its vault answers on', { skip: noAzureCli }, () => {
+  const site = functionApp();
+  const module = moduleNamed('deploy-api-function-flex');
+
+  assert.strictEqual(site.properties.virtualNetworkSubnetId, "[parameters('virtualNetworkSubnetId')]");
+  assert.strictEqual(module.properties.parameters.virtualNetworkSubnetId.value, "[parameters('vnetSubnetId')]");
+});
+
+// A default would let a deployment that forgot the subnet succeed and come up unable to read either
+// header, which is the failure this whole arrangement exists to avoid.
+test('the subnet is required, not defaulted', { skip: noAzureCli }, () => {
+  assert.ok(!('defaultValue' in template.parameters.vnetSubnetId), 'vnetSubnetId has a default');
+});
+
+// Fixed strings in both environments; a parameter for them was config for a value that never varies.
+test('the secret names are fixed in the template, not passed in', { skip: noAzureCli }, () => {
+  assert.strictEqual(template.variables.apimSharedHeaderSecretName, 'analytics-shared-header');
+  assert.strictEqual(template.variables.auditSharedHeaderSecretName, 'analytics-audit-header');
+  assert.ok(!('apimSharedHeaderSecretName' in template.parameters), 'apimSharedHeaderSecretName is a parameter again');
+  assert.ok(!('auditSharedHeaderSecretName' in template.parameters), 'auditSharedHeaderSecretName is a parameter again');
 });
 
 test('the resolving identity is the one the identity module creates', { skip: noAzureCli }, () => {
@@ -163,6 +188,10 @@ test('prod points the grant at the resource group that holds its vault', { skip:
 
   assert.strictEqual(params.keyVaultName.value, 'demi-kv-prod');
   assert.strictEqual(params.keyVaultResourceGroup.value, 'rg-demi-prod');
+  assert.match(
+    params.vnetSubnetId.value,
+    /^\/subscriptions\/be5924ac-1083-4a1b-be92-7b444882cfd9\/resourceGroups\/c4b0a8-prod-networking\/.*\/subnets\/snet-demi-func-fc1-prod$/
+  );
 });
 
 // Test's vault is in the group being deployed to, so the group is left to its default.
@@ -174,4 +203,8 @@ test('test names its vault and takes the deployment\'s own group', { skip: noAzu
 
   assert.strictEqual(params.keyVaultName.value, 'demi-kv-test');
   assert.ok(!('keyVaultResourceGroup' in params), 'test pins a resource group it does not need');
+  assert.match(
+    params.vnetSubnetId.value,
+    /^\/subscriptions\/7897ceb1-9a86-4639-87d7-7f9ff67142b3\/resourceGroups\/c4b0a8-test-networking\/.*\/subnets\/snet-demi-func-fc1-test$/
+  );
 });

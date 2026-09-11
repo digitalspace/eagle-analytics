@@ -1,13 +1,18 @@
 // Analytics ingest and read API on Flex Consumption (FC1) — `analytics-api-fc-<env>`.
 //
 // Trimmed from the DEMI module of the same name. What is deliberately absent, and why:
-//   no VNet integration   nothing this app talks to is private-endpoint only. Log Analytics
-//                         ingestion, the storage account and Keycloak are all public endpoints.
-//   no private endpoints  same reason, and they cost 9 CAD/month each.
+//   no private endpoints  nothing reaches this app privately — the gateway calls its public
+//                         hostname — and a private endpoint costs 9 CAD/month.
 //   no own Key Vault      the inbound secrets — the headers APIM stamps — are read from demi-kv-<env>,
 //                         the estate's one vault, as app-setting references. The MaxMind licence key
 //                         never reaches Azure: it is a GitHub secret used only by the geoip refresh
 //                         workflow.
+//
+// VNet integration is what makes those references resolve. demi-kv-<env> is
+// publicNetworkAccess=Disabled, forced by the landing zone's Deny-PublicPaaSEndpoints policy, and
+// App Service resolves an @Microsoft.KeyVault reference with a data-plane GET over the app's own
+// outbound path — it is not a Key Vault trusted service. Without the subnet both header settings
+// resolve to nothing and every guarded route answers 401.
 //
 // Nothing here holds a storage key: the deployment container, the host's own bookkeeping and the
 // dashboards table all authenticate as the user-assigned identity, and the account refuses shared
@@ -21,6 +26,11 @@ param environmentName string
 
 @description('Default resource tags')
 param tags object
+
+// Flex needs a subnet delegated to `Microsoft.App/environments`, at least a /27, and one that holds
+// no private endpoints — so it cannot be the landing zone's private-endpoint subnet.
+@description('Delegated subnet for Flex VNet integration. Required: demi-kv-<env>, which holds both header values, only answers from inside the VNet.')
+param virtualNetworkSubnetId string
 
 @description('Resource ID of the user-assigned managed identity the app runs as')
 param identityId string
@@ -222,6 +232,10 @@ resource apiFunctionApp 'Microsoft.Web/sites@2023-12-01' = {
   properties: {
     serverFarmId: appServicePlan.id
     httpsOnly: true
+    // The path the Key Vault references below are resolved over. Flex routes all outbound traffic
+    // through this subnet; Log Analytics ingestion, storage and Keycloak are reached through the
+    // spoke's own egress.
+    virtualNetworkSubnetId: virtualNetworkSubnetId
     // Which identity resolves the Key Vault references below. Defaults to the system-assigned one,
     // which this app does not have, so without this every reference resolves to nothing.
     keyVaultReferenceIdentity: identityId

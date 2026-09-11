@@ -61,6 +61,12 @@ param alertActionGroupId = '/subscriptions/7897ceb1-9a86-4639-87d7-7f9ff67142b3/
 // (analytics-shared-header, analytics-audit-header).
 param keyVaultName = 'demi-kv-test'
 
+// snet-demi-func-fc1-test, in c4b0a8-test-networking: the landing-zone subnet delegated to
+// Microsoft.App/environments, verified 2026-09-11 as a /27 with an NSG. Shared with
+// demi-api-fc-test — a delegated subnet takes more than one Flex app, but a /27 leaves 27
+// addresses for both apps' instances, so raising either maximumInstanceCount needs a wider subnet.
+param vnetSubnetId = '/subscriptions/7897ceb1-9a86-4639-87d7-7f9ff67142b3/resourceGroups/c4b0a8-test-networking/providers/Microsoft.Network/virtualNetworks/c4b0a8-test-vwan-spoke/subnets/snet-demi-func-fc1-test'
+
 param contactEmails = [ readEnvironmentVariable('BUDGET_CONTACT_EMAIL') ]
 
 // Pinned: an existing budget rejects a startDate change.
