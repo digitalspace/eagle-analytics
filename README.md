@@ -120,9 +120,10 @@ instead of serving an open or a permanently-401 API.
 `ALLOWED_SOURCE_APPS`, `SESSION_EVENT_CAP` and `IP_EVENT_CAP` are readable but unset by the template:
 `src/config.js` owns those defaults, and a second copy in the Bicep would drift from it.
 
-Authentication to Azure is managed identity only. There are no keys or secrets in this repo. The
-secret-shaped settings — `APIM_SHARED_HEADER_VALUE`, `AUDIT_SHARED_HEADER_VALUE` and `FRONT_DOOR_ID` —
-are read from the environment by the param files and never written into one.
+Authentication to Azure is managed identity only. There are no keys or secrets in this repo. The two
+header values are stored in Key Vault and reach the app as references (see "The estate"); the
+remaining secret-shaped setting, `FRONT_DOOR_ID`, is read from the environment by the param files and
+never written into one.
 
 ## Deploy
 
@@ -141,15 +142,30 @@ Infrastructure and application deploy separately, and only the application deplo
 granting Contributor to anyone, so a CI identity cannot hold the rights an ARM deployment of this
 group needs; the reason is Azure policy, not caution about automation.
 
-The script needs `APIM_SHARED_HEADER_VALUE`, `AUDIT_SHARED_HEADER_VALUE`, `FRONT_DOOR_ID` and
-`BUDGET_CONTACT_EMAIL` exported in that shell, and `CONFIRM_PROD=yes` for a live prod deploy. The
-param files read all four with no fallback, so a missing export fails the Bicep build instead of
-blanking a live app setting. The script also refuses a value carrying whitespace or a literal
-backslash-n, which is what `export X="$(…)"` and `echo` without `-n` leave behind: the app settings
-would take it verbatim while APIM stamps the clean value, and every request would answer 401. The two header values are the same strings eagle-demi's APIM deploy
-reads — its `azure/main.<env>.bicepparam` takes them from the same variable names, and both estates
-must be deployed with the same values or APIM's forwarded requests are refused. They are held as
-secrets on the eagle-demi `test` GitHub environment; nothing in either repo carries a value.
+The script needs `FRONT_DOOR_ID` and `BUDGET_CONTACT_EMAIL` exported in that shell, and
+`CONFIRM_PROD=yes` for a live prod deploy. The param files read both with no fallback, so a missing
+export fails the Bicep build instead of blanking a live app setting. The script also refuses a value
+carrying whitespace or a literal backslash-n, which is what `export X="$(…)"` and `echo` without `-n`
+leave behind: the app settings take it verbatim and nothing matches it afterwards.
+
+The two header values are not exported and are not deployment parameters. They live in the Key Vault
+`demi-kv-<env>` (`demi-kv-test` in `c4b0a8-test-rg`, `demi-kv-prod` in `rg-demi-prod`), which
+eagle-demi owns, under the names `analytics-shared-header` and `analytics-audit-header`. Someone sets
+each value once by hand from the environment's devbox, which is the only place that can reach the
+vault:
+
+```
+az keyvault secret set --vault-name demi-kv-<env> --name analytics-shared-header  --value '<value>'
+az keyvault secret set --vault-name demi-kv-<env> --name analytics-audit-header   --value '<value>'
+```
+
+The deploy grants the analytics identity Key Vault Secrets User on that vault and writes the app
+settings as versionless `@Microsoft.KeyVault(SecretUri=…)` references, so no value passes through
+Bicep, a param file or a deployment record. The same two values back the `analytics-shared-header` and
+`analytics-audit-header` named values on `demi-apim-<env>`; both sides must read the same value or
+APIM's forwarded requests are refused. Rotating means setting a new version in the vault, then
+stopping and starting the Function App — a reference is cached for up to 24 hours, and Flex
+Consumption does not pick up a new version on restart alone.
 
 The operator also needs read on `demi-audit-<env>`, whose customer id the template reads at deploy
 time, and which in production lives in `rg-demi-prod`. Log Analytics Reader for the analytics identity

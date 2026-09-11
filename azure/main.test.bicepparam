@@ -55,14 +55,11 @@ param allowedOrigins = [
 // demi-alerts-test, same on-call address as the rest of the estate.
 param alertActionGroupId = '/subscriptions/7897ceb1-9a86-4639-87d7-7f9ff67142b3/resourceGroups/c4b0a8-test-rg/providers/microsoft.insights/actionGroups/demi-alerts-test'
 
-// No second argument to readEnvironmentVariable, deliberately. With a `''` fallback a forgotten
-// export resolves to empty and the deploy writes that over the live value — silently, because app
-// settings are a whole-collection PUT and what-if masks @secure() values as "*******" in BOTH before
-// and after. Without the fallback bicep fails the build instead. deploy-infra.sh sources it.
-param apimSharedHeaderValue = readEnvironmentVariable('APIM_SHARED_HEADER_VALUE')
-
-// Same rule: POST /audit's own credential, no fallback.
-param auditSharedHeaderValue = readEnvironmentVariable('AUDIT_SHARED_HEADER_VALUE')
+// Both header values live in demi-kv-test, which is in this same resource group, so
+// keyVaultResourceGroup keeps its default. The app settings are references to the secrets; nothing
+// in this file or in the deployment history carries a value. Secret names keep their defaults
+// (analytics-shared-header, analytics-audit-header).
+param keyVaultName = 'demi-kv-test'
 
 param contactEmails = [ readEnvironmentVariable('BUDGET_CONTACT_EMAIL') ]
 

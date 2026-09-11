@@ -4,9 +4,9 @@
 //   no VNet integration   nothing this app talks to is private-endpoint only. Log Analytics
 //                         ingestion, the storage account and Keycloak are all public endpoints.
 //   no private endpoints  same reason, and they cost 9 CAD/month each.
-//   no Key Vault          the inbound secrets — the headers APIM stamps — are deployed as @secure()
-//                         parameters read from the environment. The MaxMind licence key never
-//                         reaches Azure: it is a GitHub secret used only by the geoip refresh
+//   no own Key Vault      the inbound secrets — the headers APIM stamps — are read from demi-kv-<env>,
+//                         the estate's one vault, as app-setting references. The MaxMind licence key
+//                         never reaches Azure: it is a GitHub secret used only by the geoip refresh
 //                         workflow.
 //
 // Nothing here holds a storage key: the deployment container, the host's own bookkeeping and the
@@ -67,13 +67,11 @@ param keycloakAllowedClients string = ''
 @description('Header name APIM stamps on a forwarded request. The app refuses anything arriving without it, which is what keeps the Function host from being callable directly.')
 param apimSharedHeaderName string = 'X-Analytics-Gateway'
 
-@description('Value of that header. Empty disables the check, which is local development only — src/config.js refuses to boot test or prod on it.')
-@secure()
-param apimSharedHeaderValue string = ''
+@description('Versionless Key Vault secret URI holding the value of that header. The app setting is a reference to it, so no value passes through this template.')
+param apimSharedHeaderSecretUri string
 
-@description('Value of the X-Analytics-Audit header the keyed analytics-machine product stamps, guarding POST /audit on its own. Empty disables the check, which is local development only — src/config.js refuses to boot test or prod on it.')
-@secure()
-param auditSharedHeaderValue string = ''
+@description('Versionless Key Vault secret URI holding the value of the X-Analytics-Audit header the keyed analytics-machine product stamps, guarding POST /audit on its own.')
+param auditSharedHeaderSecretUri string
 
 @description('Origins POST /events accepts a browser request from, as a list. A request with no Origin header is a server-side producer and is allowed; empty refuses every browser Origin.')
 param allowedOrigins array = []
@@ -224,6 +222,9 @@ resource apiFunctionApp 'Microsoft.Web/sites@2023-12-01' = {
   properties: {
     serverFarmId: appServicePlan.id
     httpsOnly: true
+    // Which identity resolves the Key Vault references below. Defaults to the system-assigned one,
+    // which this app does not have, so without this every reference resolves to nothing.
+    keyVaultReferenceIdentity: identityId
     functionAppConfig: {
       deployment: {
         storage: {
@@ -338,14 +339,17 @@ resource apiFunctionApp 'Microsoft.Web/sites@2023-12-01' = {
           name: 'APIM_SHARED_HEADER_NAME'
           value: apimSharedHeaderName
         }
+        // Both header values are Key Vault references: the platform resolves them as
+        // keyVaultReferenceIdentity above, and the app reads a plain string. No value is in this
+        // template, in a param file or in a deployment history entry.
         {
           name: 'APIM_SHARED_HEADER_VALUE'
-          value: apimSharedHeaderValue
+          value: '@Microsoft.KeyVault(SecretUri=${apimSharedHeaderSecretUri})'
         }
         // POST /audit carries its own credential, so a leaked gateway header cannot write audit rows.
         {
           name: 'AUDIT_SHARED_HEADER_VALUE'
-          value: auditSharedHeaderValue
+          value: '@Microsoft.KeyVault(SecretUri=${auditSharedHeaderSecretUri})'
         }
         {
           name: 'ALLOWED_ORIGINS'

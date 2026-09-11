@@ -57,12 +57,12 @@ param allowedOrigins = [
 // not have to be local.
 param alertActionGroupId = '/subscriptions/be5924ac-1083-4a1b-be92-7b444882cfd9/resourceGroups/rg-demi-prod/providers/microsoft.insights/actionGroups/demi-alerts-prod'
 
-// Same rule as test: no fallback, so a forgotten export fails the build instead of blanking the live
-// header and letting anything call the Function host directly.
-param apimSharedHeaderValue = readEnvironmentVariable('APIM_SHARED_HEADER_VALUE')
-
-// Same rule: POST /audit's own credential, no fallback.
-param auditSharedHeaderValue = readEnvironmentVariable('AUDIT_SHARED_HEADER_VALUE')
+// Both header values live in demi-kv-prod, which sits in rg-demi-prod — a DIFFERENT resource group
+// from this deployment, so the group is named here and the vault grant deploys into it. The vault
+// has to exist before this template runs; eagle-demi owns it. Secret names keep their defaults
+// (analytics-shared-header, analytics-audit-header).
+param keyVaultName = 'demi-kv-prod'
+param keyVaultResourceGroup = 'rg-demi-prod'
 
 param contactEmails = [ readEnvironmentVariable('BUDGET_CONTACT_EMAIL') ]
 
