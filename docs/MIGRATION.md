@@ -8,8 +8,22 @@ GC Notify webhook.
 
 ## 1. Deploy the test estate and the API
 
+First put the two header values in the vault. The app reads them as Key Vault references, so they
+must exist before the first infra deploy — a reference that cannot be read is passed through to the
+app as its own literal text, and the API then refuses to start. Run this from the environment's
+devbox, the only place that reaches `demi-kv-<env>`:
+
 ```bash
-export APIM_SHARED_HEADER_VALUE='…'   # same value as the APIM policy
+az keyvault secret set --vault-name demi-kv-test --name analytics-shared-header --value '…'
+az keyvault secret set --vault-name demi-kv-test --name analytics-audit-header  --value '…'
+```
+
+Use the same values as the `analytics-shared-header` and `analytics-audit-header` named values on
+`demi-apim-test`. The deploy below grants the Function's identity read on the vault; that grant can
+take up to 10 minutes to be honoured, so on a first deploy stop and start the Function App afterwards
+if the API comes up refusing to start on an unresolved reference.
+
+```bash
 ./scripts/deploy-infra.sh test --what-if   # read it first
 ./scripts/deploy-infra.sh test --live
 ```
