@@ -1,12 +1,7 @@
 'use strict';
 
-/**
- * The HTTP layer: one dispatcher behind the Functions host's catch-all route.
- *
- * Azure Functions matches routes in discovery order rather than by specificity (host issue #9876),
- * so per-route app.http registrations plus a fallback route non-deterministically. One catch-all
- * plus the table in ./routes.js is the only arrangement that routes predictably.
- */
+// Azure Functions matches routes in discovery order, not by specificity, so per-route registrations
+// route unpredictably. One catch-all plus the table in ./routes.js is deterministic.
 
 const crypto = require('crypto');
 const querystring = require('querystring');
@@ -15,7 +10,6 @@ const { httpError } = require('./http-error');
 const { logger, runWithRequestId } = require('../utils/logger');
 const routes = require('./routes');
 
-/** Batch ingest is the largest body this service accepts; a batch is capped at 50 events. */
 const BODY_LIMIT = 1024 * 1024;
 
 const SECURITY_HEADERS = Object.freeze({
@@ -27,17 +21,13 @@ const SECURITY_HEADERS = Object.freeze({
 
 const JSON_TYPE = 'application/json; charset=utf-8';
 
-/** Methods whose request must declare a length, so the body is bounded before it is read. */
 const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH']);
 
-// A request id is echoed into a response header and into every log line the request writes, so an
-// upstream one is only reused when it cannot carry a header break or forge a second line.
+// Echoed into a header and every log line, so an upstream id must not carry a line break.
 const REQUEST_ID = /^[A-Za-z0-9._-]{1,64}$/;
 
-/** No entity is allowed on these, so the headers that describe one must not be sent either. */
 const BODYLESS_STATUS = new Set([204, 304]);
 
-/** `:name` becomes a single non-empty path segment. Compiled once, at module load. */
 function compile(routePath) {
   const names = [];
   const source = routePath
@@ -51,18 +41,13 @@ function compile(routePath) {
 
 const TABLE = routes.map((route) => ({ ...route, ...compile(route.path) }));
 
-/**
- * @returns {object|null} the matched route with its `params`, or null for a 404.
- */
 function match(method, pathname) {
-  // One leading `/analytics` only: APIM and the nginx proxy both mount this API under that prefix,
-  // while `func start` and the Function host serve it at the root.
+  // APIM and nginx mount this API under `/analytics`; `func start` and the host serve it at the root.
   let target = pathname;
   if (target === '/analytics') target = '/';
   else if (target.startsWith('/analytics/')) target = target.slice(10);
   if (target.length > 1) target = target.replace(/\/+$/, '') || '/';
 
-  // HEAD answers off the GET route and drops the body.
   const verb = method === 'HEAD' ? 'get' : method.toLowerCase();
 
   for (const route of TABLE) {
@@ -83,7 +68,7 @@ function match(method, pathname) {
   return null;
 }
 
-/** The response surface the controllers use. Nothing streams: the host wants one buffered body. */
+// Nothing streams: the host wants one buffered body.
 function makeRes(requestId) {
   const headers = { ...SECURITY_HEADERS, 'x-request-id': requestId };
 
@@ -121,8 +106,7 @@ async function readJsonBody(request, req) {
   if (req.method === 'GET' || req.method === 'HEAD') return;
 
   const declared = req.headers['content-length'];
-  // Without a declared length there is nothing to check the body against before reading it, and the
-  // gateway in front of this API always sends one.
+  // A declared length bounds the body before it is read; the gateway always sends one.
   if (BODY_METHODS.has(req.method) && declared === undefined) throw httpError(411, 'Content-Length required');
   if (Number(declared) > BODY_LIMIT) throw httpError(413, 'request entity too large');
 
@@ -137,12 +121,8 @@ async function readJsonBody(request, req) {
   }
 }
 
-/**
- * Run a route's guards, before the body is read: an unauthenticated caller gets its 401 without the
- * service parsing a megabyte on its behalf. A guard either throws an httpError or answers itself.
- *
- * @returns {Promise<boolean>} false when a guard has already answered.
- */
+// Guards run before the body is read, so an unauthenticated caller never costs a megabyte parse.
+// Returns false when a guard has already answered.
 async function runGuards(route, req, res) {
   for (const guard of route.guards || []) {
     await guard()(req, res);
@@ -151,9 +131,7 @@ async function runGuards(route, req, res) {
   return true;
 }
 
-/**
- * The Functions HTTP handler. Returns an HttpResponseInit.
- */
+/** The Functions HTTP handler. Returns an HttpResponseInit. */
 async function dispatch(request) {
   const started = process.hrtime.bigint();
   const url = new URL(request.url);
@@ -191,11 +169,9 @@ async function dispatch(request) {
       }
     } catch (err) {
       const status = err.status || 500;
-      // A 4xx is caller error the route already classified, so it gets no error-level stack.
       if (status >= 500) logger.error('Analytics API error', { error: err.message, stack: err.stack });
       if (!res.finished) {
-        // Only a 500 is masked: an httpError's message is part of the API, and the 503 a missing
-        // workspace raises is the reason the admin UI shows.
+        // Only a 500 is masked: other messages are API, e.g. the 503 reason the admin UI shows.
         res.status(status).json({ error: status === 500 ? 'Internal Server Error' : err.message });
       }
     } finally {
@@ -214,6 +190,5 @@ async function dispatch(request) {
   });
 }
 
-// makeRes is exported for the controller suites: a hand-rolled `{ status, json }` double answers
-// twice without complaining and reports objects the real one would have serialised.
+// makeRes is exported for tests: a hand-rolled double answers twice without complaint.
 module.exports = { dispatch, makeRes };

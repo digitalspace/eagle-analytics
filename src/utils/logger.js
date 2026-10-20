@@ -7,16 +7,13 @@ const config = require('../config');
 
 const asyncLocalStorage = new AsyncLocalStorage();
 
-// Pulls the current request id onto every line written inside runWithRequestId.
 const requestIdFormat = format((info) => {
   const store = asyncLocalStorage.getStore();
   if (store && store.requestId) info.requestId = store.requestId;
   return info;
 });
 
-// stdout only. Shipping to Application Insights is wired in index.js, which starts the Azure
-// Monitor OpenTelemetry distro with winston instrumentation; with no connection string (local
-// development, tests) nothing starts and this stays a plain stdout logger.
+// Console only; index.js ships these lines to Application Insights when it is configured.
 const isProduction = config.nodeEnv === 'production';
 
 const logger = winston.createLogger({
@@ -25,8 +22,7 @@ const logger = winston.createLogger({
   transports: [
     new transports.Console({
       handleExceptions: true,
-      // Errors on stderr, everything else on stdout. Winston writes the lot to stdout by default, so
-      // without this a failure reads as ordinary output in the host's log stream.
+      // Winston defaults everything to stdout, where a failure reads as ordinary host output.
       stderrLevels: ['error'],
       format: format.combine(
         format.errors({ stack: true }),
@@ -45,6 +41,5 @@ const logger = winston.createLogger({
 
 module.exports = {
   logger,
-  /** Run a handler with a request id attached to every log line it writes. */
   runWithRequestId: (requestId, callback) => asyncLocalStorage.run({ requestId }, callback)
 };
