@@ -93,6 +93,8 @@ There is no `SourceIp` column, so `EagleEvents_CL | where isnotempty(SourceIp)` 
 country, device and environment, carrying `Events`, `Sessions` and `Users`. Its `Day` column is the
 bucket. Ranges longer than 30 days read it instead of scanning raw events.
 
+The Logs Ingestion API rewrites `TimeGenerated` to the ingest time on any row older than two days. A row imported from history therefore carries its date only in `Day`, which the live rollup rule fills the same way, so charts read both alike.
+
 ## EagleAudit_CL
 
 Staff actions, EPIC-wide, 730 days interactive and seven years total. `POST /audit` with
