@@ -1,7 +1,4 @@
-# Publish the browser client to GitHub Packages from a `client-v*` tag.
-#
-# Its own tag series, because `client/` releases on its own cadence: the API deploys from main, the
-# package only when a consumer needs a new version.
+# Own `client-v*` tag series: the API deploys from main, the client only when a consumer needs it.
 
 name: Publish analytics client
 
@@ -46,8 +43,7 @@ jobs:
       - name: Install dependencies
         run: yarn install --immutable
 
-      # The tag names the version, package.json holds it, and a mismatch publishes something nobody
-      # asked for. Checked before the build so the run fails in seconds.
+      # Checked before the build so a tag/version mismatch fails in seconds.
       - name: Check the tag matches package.json
         env:
           TAG: ${{ github.ref_name }}
@@ -74,25 +70,20 @@ jobs:
       - name: Build
         run: yarn build
 
-      # `publishConfig.registry` in client/package.json points at GitHub Packages; the token is the
-      # run's own, which can write packages in this repository and nothing else.
+      # The run's own token can write packages in this repository and nothing else.
       - name: Publish
         env:
           YARN_NPM_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: yarn npm publish
 
-      # `client/dist` is gitignored, so the tag on its own carries no build and a copy vendored into
-      # eagle-admin or eagle-public cannot be traced back to a release. The tarball is the release
-      # artifact; SHA256SUMS is what a consumer records next to its vendored copy.
-      #
-      # `yarn pack` rather than `npm pack`: same tarball, and `--out` names it without a rename step.
+      # client/dist is gitignored, so the tarball and SHA256SUMS are what trace a copy vendored into
+      # eagle-admin or eagle-public back to a release.
       - name: Pack the release assets
         run: |
           set -euo pipefail
           yarn pack --out "$TARBALL"
-          # dist paths are relative to client/, which is also the tarball's `package/` root, so one
-          # file verifies both: `sha256sum -c SHA256SUMS --ignore-missing` beside the download, and
-          # the same from inside the extracted `package/`.
+          # Paths are relative to client/, the tarball's `package/` root, so one SHA256SUMS verifies
+          # both the download and the extracted `package/`.
           {
             sha256sum "$TARBALL"
             find dist -type f -print0 | sort -z | xargs -0 sha256sum

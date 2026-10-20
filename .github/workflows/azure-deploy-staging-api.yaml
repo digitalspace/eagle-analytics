@@ -1,5 +1,4 @@
-# Deploy the analytics API to the staging Flex Consumption app. Application only; the estate deploys
-# by hand with `scripts/deploy-infra.sh` — README "Deploy".
+# Application only; the estate deploys by hand with `scripts/deploy-infra.sh` (README "Deploy").
 
 name: Deploy analytics to Azure staging
 
@@ -35,16 +34,14 @@ jobs:
     name: Build & Deploy API (Azure Function App)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # Declaring an environment CHANGES THE OIDC SUBJECT CLAIM to
-    # `repo:digitalspace/eagle-analytics:environment:test`; only a federated credential registered
-    # for that subject on analytics-cicd-test matches it.
+    # An environment CHANGES THE OIDC SUBJECT CLAIM to `repo:digitalspace/eagle-analytics:environment:test`;
+    # only the federated credential for that subject on analytics-cicd-test matches.
     environment: test
     env:
       AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
     steps:
       - name: Checkout repository
-        # Depth 0 because BUILD_ID comes from `git describe --tags`: at depth 1 the tag refs arrive
-        # with no ancestry path from HEAD and describe fails.
+        # Depth 0: BUILD_ID comes from `git describe --tags`, which fails with no ancestry at depth 1.
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -71,13 +68,11 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      # Dev dependencies are most of the package's file count, and the Flex extract phase is paid
-      # per file. Nothing after this step needs them.
+      # Flex extract is paid per file and dev dependencies are most of them; nothing later needs them.
       - name: Drop dev dependencies from the package
         run: yarn workspaces focus --production
 
-      # `config-zip`: a Flex app has no Kudu wwwroot to POST a zip into — it publishes to the
-      # deployment blob container.
+      # `config-zip`: a Flex app has no Kudu wwwroot; it publishes to the deployment blob container.
       - name: Deploy the API to the Flex app
         run: |
           set -euo pipefail
@@ -88,9 +83,8 @@ jobs:
             -n "$API_FLEX_APP_NAME" \
             --src /tmp/api-flex.zip
 
-      # Deployed is not the same fact as serving. `/health` needs no auth (src/http/routes.js) and
-      # host.json sets routePrefix "" so it is not under /api. The retries cover the cold start
-      # after a publish: a Flex app answers 503 until the new worker is up.
+      # `/health` needs no auth and host.json sets routePrefix "", so it is not under /api. Retries
+      # cover the 503s a Flex app returns until the new worker is up.
       - name: Smoke test the deployed API
         run: |
           set -euo pipefail

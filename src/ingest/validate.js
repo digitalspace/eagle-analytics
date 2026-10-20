@@ -1,16 +1,7 @@
 'use strict';
 
-/**
- * Every limit the ingest endpoints enforce, and the mapping from a producer's JSON onto a table row.
- *
- * The event caps are ported from penguin-analytics (src/routes/events.js), so a producer that was
- * accepted there is accepted here. Two deliberate differences: sourceApp is checked against an
- * allow-list, and a timestamp has to actually look like ISO 8601 rather than merely be something
- * Date.parse tolerates — the column it lands in is a datetime, and 'next tuesday' parses.
- *
- * A bad entry is rejected on its own and the rest of the batch is accepted, so a producer knows
- * exactly which events it still holds and its retry duplicates nothing.
- */
+// Event caps match penguin-analytics so its producers still pass. A bad entry is rejected alone, so
+// the producer knows which events to retry and the retry duplicates nothing.
 
 const crypto = require('crypto');
 
@@ -26,16 +17,14 @@ const LIMITS = Object.freeze({
   userId: 255,
   auditField: 255,
   detailBytes: 8000,
-  // Page holds a URL, and a producer that builds one in a loop can offer kilobytes of it. The column
-  // is grouped by in every chart, where anything past this is already unreadable.
+  // Page may hold a kilobyte-long URL; every chart groups by it, and past this it is unreadable.
   columnText: 2048
 });
 
 /** Producers with no browser session, so no sessionId to require. */
 const SERVER_SOURCE_APPS = Object.freeze(['eagle-api', 'eagle-demi']);
 
-// The window the Logs Ingestion API stores verbatim: it rewrites TimeGenerated more than two days
-// old to ingestion time, which would silently move an event to the wrong day.
+// Logs Ingestion API rewrites a TimeGenerated over two days old to ingestion time: the wrong day.
 const MAX_AGE_MS = 2 * 24 * 60 * 60 * 1000;
 
 /** Tolerance for a client clock running fast. Anything past it is a bad clock or a made-up date. */
@@ -51,7 +40,7 @@ const PROMOTED_PROPERTIES = Object.freeze([
   'duration_ms'
 ]);
 
-// Date, time, optional seconds and fraction, optional zone. Anything else is a producer bug.
+// Stricter than Date.parse, which accepts 'next tuesday'; the column is a datetime.
 const ISO_8601 = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d{1,7})?)?(Z|[+-]\d{2}:?\d{2})?$/;
 
 /** A promoted column value: strings and numbers only, never an object rendered as [object Object]. */
@@ -61,10 +50,7 @@ function columnText(value) {
   return '';
 }
 
-/**
- * A trimmed string within its cap. Absent and over-long share one message on purpose: the caller
- * needs to know which field to fix, not which of two ways it was wrong.
- */
+/** A trimmed string within its cap. Absent and too long share one message: the caller needs the field. */
 function stringField(errors, raw, field, max, required) {
   const value = typeof raw === 'string' ? raw.trim() : raw;
   if (value === undefined || value === null || value === '') {
@@ -98,11 +84,7 @@ function inIngestionWindow(iso) {
 
 const OUT_OF_WINDOW = 'timestamp must be no more than 5 minutes ahead of now and no more than 2 days old';
 
-/**
- * A JSON object under the serialised byte ceiling. The ceiling is what keeps one producer from
- * turning a per-GB bill into an incident, and it is measured after undefined values are dropped
- * because that is what will be sent.
- */
+/** A JSON object under the byte cap that keeps one producer off the per-GB bill, measured as sent. */
 function detailField(errors, raw, field) {
   if (raw === undefined || raw === null) return {};
   if (!isPlainObject(raw)) {
@@ -119,8 +101,7 @@ function detailField(errors, raw, field) {
   try {
     serialized = JSON.stringify(cleaned);
   } catch {
-    // Circular references and BigInt. Caught here rather than at the writer, which cannot answer
-    // the caller.
+    // Circular refs and BigInt: caught here because the writer cannot answer the caller.
     errors.push(`${field} must be JSON serializable`);
     return {};
   }
@@ -158,10 +139,7 @@ function normalizeEvent(raw) {
   return { errors, event };
 }
 
-/**
- * Shared by both endpoints: same envelope, same caps, same per-entry answer. An envelope problem is
- * the whole request's; a bad entry costs only itself.
- */
+/** Shared by both endpoints. An envelope problem fails the request; a bad entry fails only itself. */
 function validateBatch(rows, field, normalize) {
   if (!Array.isArray(rows)) {
     return { invalid: { index: null, errors: [`body must contain an array of ${field}`] } };
@@ -184,9 +162,8 @@ function validateBatch(rows, field, normalize) {
 }
 
 /**
- * @returns {{entries: object[], rejected: {index: number, error: string}[]}|{invalid: {index: null,
- * errors: string[]}}} the events that validated and the index of each that did not, or a single
- * envelope problem that means there is no batch to read at all.
+ * Valid events and the index of each rejected one, or `invalid` when there is no batch to read.
+ * @returns {{entries: object[], rejected: {index: number, error: string}[]}|{invalid: {index: null, errors: string[]}}}
  */
 function validateEventBatch(body) {
   const rows = isPlainObject(body) ? body.events : undefined;
@@ -211,8 +188,7 @@ function toEventRow(event) {
     SourceApp: event.sourceApp,
     SessionId: event.sessionId,
     UserId: event.userId,
-    // path is what the client sends on every event; url only under enhanced tracking, and it carries
-    // the query string, so it is the fallback rather than the first choice.
+    // path comes on every event; url only under enhanced tracking, and it carries the query string.
     Page: columnText(properties.path) || columnText(properties.url),
     Referrer: columnText(properties.referrer),
     ProjectId: columnText(properties.project_id),
@@ -229,16 +205,8 @@ function toEventRow(event) {
 }
 
 /**
- * An EagleAudit_CL row from a server-side producer. Columns are eagle-demi's audit set
- * (azure/modules/event-logs.bicep) plus SourceApp, which is what makes one table serve every app.
- *
- * SourceIp is not read from the body — the caller does not get to say where it called from. The
- * controller fills it from the connection and the DCR transform masks it.
- */
-/**
- * An audit row's instant. Optional: a producer that generates its own can identify a retried batch as
- * the same event. Out of the ingestion window it is replaced rather than refused, because a row the
- * ingestion API would move to a wrong day is still a row an audit trail has to keep.
+ * Optional, so a retried batch keeps its instant. Out of the ingestion window it is replaced, not
+ * refused: an audit trail keeps every row.
  */
 function auditTime(errors, raw) {
   const serverTime = new Date().toISOString();
@@ -253,6 +221,8 @@ function auditTime(errors, raw) {
   return serverTime;
 }
 
+// SourceIp is never read from the body: the controller fills it from the connection and the DCR
+// transform masks it.
 function normalizeAuditRow(raw) {
   const errors = [];
   if (!isPlainObject(raw)) return { errors: ['row must be an object'] };

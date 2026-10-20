@@ -1,6 +1,4 @@
-# Replace the GeoLite2 city database in the analytics storage account. MaxMind rebuilds it about
-# twice a month; an ingest instance loads it once on its first request, so a refresh reaches events
-# as instances recycle.
+# Ingest instances load the database once, so a refresh reaches events as instances recycle.
 
 name: Refresh GeoLite2 database
 
@@ -41,11 +39,8 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      # The script downloads, extracts and uploads; keeping the logic there means a refresh by hand
-      # runs the same steps CI does. The account is named, not looked up by group: the identity holds
-      # nothing at resource-group scope, and the name carries a uniqueString suffix.
-      # Both values travel through the environment, never interpolated into the script body: an
-      # expression is substituted before bash starts, so its content would be run as shell.
+      # Account named, not looked up: the identity holds nothing at group scope. Values go through env,
+      # never into the script body: an expression is substituted before bash starts, so it runs as shell.
       - name: Download and upload the database
         env:
           MAXMIND_LICENSE_KEY: ${{ secrets.MAXMIND_LICENSE_KEY }}

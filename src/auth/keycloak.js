@@ -1,13 +1,6 @@
 'use strict';
 
-/**
- * Keycloak bearer verification for the staff-only read routes.
- *
- * Signature verification uses `jsonwebtoken`, the same library eagle-demi verifies IDIR tokens with
- * (`src/helpers/auth.js`). The JWKS is fetched and cached here instead of through `jwks-rsa`: Node
- * converts a JWK to a key object natively, so the whole of that dependency would be a ten-minute
- * cache and an injectable fetch, which is what the twenty lines below are.
- */
+// JWKS cached here rather than through jwks-rsa: Node converts a JWK to a key object natively.
 
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
@@ -21,7 +14,7 @@ const STAFF_ROLES = ['sysadmin', 'staff', 'demi-admin'];
 
 const JWKS_TTL_MS = 10 * 60 * 1000;
 
-/** Signing keys may be minutes out of step between Keycloak and this worker. */
+/** Clock skew allowed between Keycloak and this worker. */
 const CLOCK_TOLERANCE_SECONDS = 5;
 
 function issuer() {
@@ -41,17 +34,11 @@ async function fetchJwks() {
   return res.json();
 }
 
-// Injection seam for test/keycloak.test.js, matching src/ingest/dcr-writer.js. Real code never
-// passes anything here.
+// Test seam: _setJwksLoader swaps it.
 let loadJwks = fetchJwks;
 
-/**
- * The RSA public key for one `kid`, from a cache no older than ten minutes.
- *
- * An unrecognised `kid` does NOT trigger a refetch. Otherwise every forged token with a random kid
- * is one unauthenticated request to Keycloak, and Keycloak is the login path for every EPIC app. A
- * freshly rotated signing key therefore becomes usable when the cache expires, not sooner.
- */
+// An unknown kid NEVER triggers a refetch: each forged token would hit Keycloak, the login path for
+// every EPIC app. A rotated signing key becomes usable when the cache expires.
 async function refresh(now) {
   const jwks = await loadJwks();
   const keys = new Map();
@@ -64,8 +51,7 @@ async function refresh(now) {
 
 async function signingKey(kid, now = Date.now()) {
   if (cache.keys.size === 0 || now - cache.at >= JWKS_TTL_MS) {
-    // One fetch, however many requests find the cache stale together: a cold instance answers a burst
-    // of staff requests, and Keycloak is the login path for every EPIC app.
+    // One fetch however many requests find the cache stale together, as a cold instance does.
     if (!refreshing) refreshing = refresh(now).finally(() => { refreshing = null; });
     await refreshing;
   }
@@ -73,13 +59,8 @@ async function signingKey(kid, now = Date.now()) {
 }
 
 /**
- * Is the token's client one we serve?
- *
- * `aud` and `azp` together: Keycloak leaves `aud` as `account` for a plain browser client and names
- * the client in `azp`, so checking either alone rejects real tokens or accepts foreign ones.
- *
- * An empty allowlist refuses everything. This is a staff read API over a whole tenancy's analytics;
- * an unset variable must not be the thing that makes it open.
+ * Both `aud` and `azp`: Keycloak sets `aud` to `account` for a browser client and names it in `azp`.
+ * An empty allowlist refuses everything, so an unset variable cannot open the API.
  */
 function isAllowedClient(claims, allowedClients) {
   if (allowedClients.length === 0) return false;
@@ -136,12 +117,10 @@ async function verify(req) {
     throw httpError(401, 'Unauthorized. Token verification failed.');
   }
 
-  // jsonwebtoken enforces `exp` only when the token carries one, so a token minted without it would
-  // otherwise be permanent.
+  // jsonwebtoken enforces `exp` only when present, so a token without one would never expire.
   if (typeof claims.exp !== 'number') throw httpError(401, 'Unauthorized. Token carries no expiry.');
 
-  // Keycloak stamps an access token 'Bearer'. An ID token ('ID') or a refresh token is not a
-  // credential for an API, and both are held by the same browser that holds the access token.
+  // Access tokens only: the same browser holds ID and refresh tokens, which are no API credential.
   if (claims.typ !== 'Bearer') throw httpError(401, 'Unauthorized. Token is not an access token.');
 
   if (!isAllowedClient(claims, config.keycloakAllowedClients)) {
@@ -152,12 +131,7 @@ async function verify(req) {
   return claims;
 }
 
-/**
- * The identity behind a staff request.
- *
- * @returns {Promise<{sub: string, username: string, roles: string[]}>} every realm role, not only
- * the staff ones: callers gate extra behaviour on `sysadmin`.
- */
+/** @returns {Promise<{sub: string, username: string, roles: string[]}>} all realm roles; callers check `sysadmin`. */
 async function requireStaff(req) {
   const claims = await verify(req);
   const roles = (((claims.realm_access || {}).roles) || []).filter((role) => typeof role === 'string');
@@ -174,10 +148,7 @@ async function requireStaff(req) {
   };
 }
 
-/**
- * The route-table form of requireStaff (src/http/routes.js). Every staff route carries it, and its
- * controller reads the identity off `req.user` rather than authenticating a second time.
- */
+/** Route-table form of requireStaff; controllers read `req.user` instead of authenticating again. */
 async function staffGuard(req) {
   req.user = await requireStaff(req);
 }

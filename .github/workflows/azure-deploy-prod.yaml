@@ -1,7 +1,5 @@
-# Deploy the analytics API to production from a released tag, dispatch only. There is no `push:`
-# trigger here and there must never be one: production deploys from a tag verified on staging.
-#
-# Application only; the estate deploys by hand before the tag ships — README "Deploy".
+# Dispatch only, NEVER a `push:` trigger: production deploys a tag verified on staging. Application
+# only; the estate deploys by hand first (README "Deploy").
 
 name: Deploy analytics to Azure production
 
@@ -47,9 +45,8 @@ jobs:
             exit 1
           fi
 
-      # `ref:` is the whole point: without it the checkout is the branch the dispatch was fired from
-      # and the job ships main while claiming to deploy a tag. Depth 0 because BUILD_ID comes from
-      # `git describe --tags`.
+      # Without `ref:` the job ships the dispatch branch while claiming a tag. Depth 0: BUILD_ID comes
+      # from `git describe --tags`.
       - name: Checkout the tag
         uses: actions/checkout@v7
         with:
@@ -78,13 +75,11 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      # Dev dependencies are most of the package's file count, and the Flex extract phase is paid
-      # per file. Nothing after this step needs them.
+      # Flex extract is paid per file and dev dependencies are most of them; nothing later needs them.
       - name: Drop dev dependencies from the package
         run: yarn workspaces focus --production
 
-      # `config-zip`: a Flex app has no Kudu wwwroot to POST a zip into — it publishes to the
-      # deployment blob container.
+      # `config-zip`: a Flex app has no Kudu wwwroot; it publishes to the deployment blob container.
       - name: Deploy the API to the Flex app
         run: |
           set -euo pipefail
