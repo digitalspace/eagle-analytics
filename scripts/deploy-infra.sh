@@ -16,8 +16,8 @@ deploy-infra.sh <test|prod> [--what-if|--live]
                              X-Azure-SocketIP is trusted as the client address.
   BUDGET_CONTACT_EMAIL       address the budget thresholds notify.
 
-  The two header values are no longer exported here: they are read from demi-kv-<env>
-  by the Function itself. See README "The estate".
+  The shared and audit header values are not script inputs: the Function reads
+  them from demi-kv-<env>. See README "The estate".
 
   CONFIRM_PROD=yes           required for prod --live.
   WHATIF_BEFORE_LIVE=1       run a what-if before a --live deploy, in the same output. Off by
