@@ -7,17 +7,13 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-/**
- * scripts/deploy-infra.sh, exercised with no Azure: the required-variable checks run before the
- * first `az` call, and a stub `az` first on PATH stands in for the deploy the accepted case reaches.
- */
+/** scripts/deploy-infra.sh without Azure: its variable checks run before the first `az`, stubbed on PATH. */
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'deploy-infra.sh');
 const AZURE_DIR = path.join(__dirname, '..', 'azure');
 const SECRET = 'value-that-must-never-be-printed';
 
-// What the param files read from the environment with no fallback, so an unset one would deploy a
-// blank setting. The header values are not here any more: they are Key Vault references now.
+// Every variable the param files read from the environment; the script guards each one.
 const REQUIRED = ['FRONT_DOOR_ID', 'BUDGET_CONTACT_EMAIL'];
 
 const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'deploy-infra-guard-'));
@@ -39,9 +35,7 @@ test('clean values reach the deployment', () => {
   assert.strictEqual(result.status, 0, result.stderr);
 });
 
-// The 401s on test: the operator's shell held the two header values with a trailing literal
-// backslash-n, this script passed them into the app settings verbatim, and APIM stamped the clean
-// value on every forwarded request.
+// Shapes a pasted value picks up in an operator's shell; bicep passes each to the deployment verbatim.
 const MANGLED = [
   ['a literal backslash-n', `${SECRET}\\n`],
   ['a trailing newline', `${SECRET}\n`],
@@ -73,9 +67,7 @@ test('an unset variable is still reported as unset, not as mangled', () => {
   assert.match(result.stderr, /FRONT_DOOR_ID is not set/);
 });
 
-// The values moved into demi-kv-<env> and the app settings became references to them, so the script
-// has no reason to demand them — and an operator who still has a mangled one exported is not stopped
-// by something that never reaches the deployment.
+// Header values are Key Vault references, so one left exported in the shell must not block a deploy.
 test('a header value left over in the operator\'s shell is not a deploy input', () => {
   const result = run({ APIM_SHARED_HEADER_VALUE: `${SECRET}\\n`, AUDIT_SHARED_HEADER_VALUE: `${SECRET} ` });
 
@@ -89,8 +81,8 @@ test('a deploy runs with neither header value in the environment', () => {
   assert.ok(!/SHARED_HEADER_VALUE/.test(result.stderr), `stderr still asks for a header value: ${result.stderr}`);
 });
 
-// A param file that reads a variable the loop above does not cover would deploy a blank setting: the
-// build resolves the read to an empty string rather than failing.
+// Unguarded, an unset variable fails build-params with an opaque BCP427 and a mangled one deploys
+// verbatim, so the script must check every variable the param files read.
 test('every environment read the param files make is guarded', () => {
   const sources = fs
     .readdirSync(AZURE_DIR)

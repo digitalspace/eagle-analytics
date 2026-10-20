@@ -1,25 +1,5 @@
-// Event and audit store for EPIC product analytics — `analytics-logs-<env>`.
-//
-// WHY ITS OWN WORKSPACE. The application-log workspaces (`eagle-logs-<env>`, `demi-logs-<env>`)
-// carry `workspaceCapping.dailyQuotaGb`, which STOPS COLLECTION for the rest of the UTC day once
-// hit. That is the right backstop for a runaway log loop and the wrong behaviour for an analytics
-// series and an audit trail: a chatty error path would take the record down with it. A separate,
-// uncapped workspace keeps both, and read access to analytics becomes a deliberate grant rather
-// than a side effect of Reader on a monitored resource.
-//
-// NO `workspaceCapping` HERE, deliberately. The cost guard is elsewhere and layered: a per-session and
-// a per-address event cap in the ingest Function — APIM Consumption has no rate-limit-by-key, so both
-// live in the app — and the forecast notification on `analytics-budget-<env>`.
-//
-// TABLES
-//   EagleEvents_CL       raw product events, 400 days (thirteen months: this month against the
-//                        same month last year, and no longer)
-//   EagleAudit_CL        EPIC-wide staff audit trail, 730 interactive / 2556 total
-//   EagleEventsDaily_CL  daily rollup written by the summary rule, 730 days
-//
-// All three are Analytics plan, not Auxiliary. Unlike DEMI's `DemiEvents_CL`, this store is the
-// backing table of a self-serve dashboard builder: interactive queries have to cost nothing, or
-// every chart a member of staff draws is a bill.
+// Separate from the app-log workspaces: their dailyQuotaGb stops collection for the day, and the
+// audit trail must not stop with it. No workspaceCapping: ingest caps and the budget guard cost.
 
 @description('Location for the workspace and data collection rule. Both must share a region.')
 param location string = resourceGroup().location
@@ -48,27 +28,15 @@ var eventsTableName = 'EagleEvents_CL'
 var auditTableName = 'EagleAudit_CL'
 var dailyTableName = 'EagleEventsDaily_CL'
 
-// 2556 and NOT 2555, which is what 7 x 365 gives and what the API rejects: past two years, total
-// retention must be a whole number of years drawn from a fixed list — 1095, 1460, 1826, 2191, 2556,
-// 2922, 3288, 3653, 4018, 4383. Anything else fails the deployment with InvalidParameter. 730 is
-// the platform maximum for interactive retention; the rest sits in long-term retention and comes
-// back through a search job.
+// Total retention past two years must be a value from a fixed list (1095, 1460, 1826, 2191, 2556, ...);
+// 2555 (7 x 365) fails with InvalidParameter. 730 is the interactive maximum.
 var eventsRetentionDays = 400
 var auditInteractiveDays = 730
 var auditTotalDays = 2556
 var dailyRetentionDays = 730
 
-// Column sets are declared once and used twice: once as the table schema, once as the DCR stream
-// declaration. They must agree, and a single source is the only way to keep them agreeing.
-//
-// Fixed columns exist for anything ever filtered or grouped on — which is exactly the dimension
-// list the dashboard builder offers. Everything else goes in `Detail`, which is dynamic, so a new
-// event type is a new value rather than a schema change.
-//
-// NO SourceIp COLUMN. The ingest Function resolves coarse geo from the address and drops it before
-// writing, so there is nothing here to mask: `EagleEvents_CL | where isnotempty(SourceIp)` cannot
-// return rows because the column does not exist. Sessions are per-tab and anonymous; UserId is set
-// only by the staff apps, which authenticate.
+// Each column set is both the table schema and the DCR stream, so the two cannot drift. Ingest drops
+// the client address after the geo lookup, so there is no SourceIp column to mask.
 var eventsColumns = [
   { name: 'TimeGenerated', type: 'datetime' }
   { name: 'EventName', type: 'string' }
@@ -91,13 +59,8 @@ var eventsColumns = [
   { name: 'Detail', type: 'dynamic' }
 ]
 
-// The DEMI audit schema plus `SourceApp`: this table is EPIC-wide, so a row has to say which
-// application produced it. DEMI's own `auditEvent()` writes here through the same DCR.
-//
-// Both actor identifiers, deliberately. `ActorId` is the Keycloak `sub`, stable across a rename and
-// what joins back to the realm; `ActorName` is what a human reads without going and asking Keycloak
-// who a UUID is. An audit trail that needs a second system online to answer "who did this" is worse
-// than one that does not.
+// SourceApp because the table is EPIC-wide. ActorId (Keycloak sub) joins back to the realm; ActorName
+// lets a reader see who acted without a Keycloak lookup.
 var auditColumns = [
   { name: 'TimeGenerated', type: 'datetime' }
   { name: 'EventId', type: 'string' }
@@ -125,14 +88,10 @@ resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
     sku: {
       name: 'PerGB2018'
     }
-    // Workspace default, which the custom tables below all override. 90 rather than 30 because the
-    // Azure-owned tables that arrive here on their own — AppServiceAuditLogs from the Function's
-    // diagnostic setting — inherit this number, and who deployed the ingest API is worth more than
-    // a month. Those tables hold kilobytes, so the retention charge is noise.
+    // Custom tables override this; 90 days covers Azure-owned tables such as AppServiceAuditLogs.
     retentionInDays: 90
     features: {
-      // FALSE, and true on the application-log workspaces. Reading the analytics record is not an
-      // attribute of any monitored resource; it should be a deliberate grant on this workspace.
+      // False: reading analytics must be a grant on this workspace, not a side effect of resource Reader.
       enableLogAccessUsingOnlyResourcePermissions: false
     }
     publicNetworkAccessForIngestion: 'Enabled'
@@ -140,12 +99,13 @@ resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   }
 }
 
-// API version 2025-07-01 is load-bearing: 2023-09-01 accepts only 'Analytics' and 'Basic' for
-// `plan`, and rejects `totalRetentionInDays` past the interactive maximum.
+// Tables need this newer API version: the workspace's version accepts only Analytics and Basic for
+// `plan`, and rejects totalRetentionInDays past the interactive maximum.
 resource eventsTable 'Microsoft.OperationalInsights/workspaces/tables@2025-07-01' = {
   parent: workspace
   name: eventsTableName
   properties: {
+    // Analytics, not Auxiliary, on all three tables: dashboard queries must not bill per query.
     plan: 'Analytics'
     retentionInDays: eventsRetentionDays
     totalRetentionInDays: eventsRetentionDays
@@ -170,12 +130,8 @@ resource auditTable 'Microsoft.OperationalInsights/workspaces/tables@2025-07-01'
   }
 }
 
-// Written twice, same as the two above: once as the table schema, once as the DCR stream the history
-// import posts to.
-//
-// The summary rule adds four `_`-prefixed columns to this table that the tables API refuses in a
-// PUT (MSG 1008, invalid characters), so what-if reports them as a delete on every run; the
-// deployment leaves them in place and the rule keeps writing (observed 2026-09-06 on test).
+// The summary rule adds four `_` columns the tables API refuses in a PUT (MSG 1008), so what-if shows
+// them as deleted on every run; the deployment leaves them in place.
 var dailyColumns = [
   { name: 'TimeGenerated', type: 'datetime' }
   { name: 'Day', type: 'datetime' }
@@ -186,23 +142,14 @@ var dailyColumns = [
   { name: 'Country', type: 'string' }
   { name: 'DeviceType', type: 'string' }
   { name: 'Env', type: 'string' }
-  // count() and dcount() are long. A type mismatch here breaks the summary rule's write rather than
-  // the deployment, so these track its query below.
+  // count() and dcount() return long; a mismatch breaks the rule's write, not the deployment.
   { name: 'Events', type: 'long' }
   { name: 'Sessions', type: 'long' }
   { name: 'Users', type: 'long' }
 ]
 
-// The rollup destination is declared rather than left to the summary rule.
-//
-// The rule creates the table on its first run if it is absent, but it creates it with the WORKSPACE
-// default retention. A rollup that expires before the raw events it summarises cannot answer "this
-// month against the same month last year", which is most of why it exists.
-//
-// `Day` is ours, not the rule's. The Logs Ingestion API overwrites `TimeGenerated` on rows older
-// than two days, so the penguin-analytics history import (WP9) cannot backdate rows through it —
-// the real date has to travel in a column of its own. The summary rule fills the same column, so
-// imported history and live rollups are queried identically.
+// Declared so the rule cannot create it at workspace default retention. `Day` holds the real date:
+// Logs Ingestion rewrites TimeGenerated older than two days, so imported history cannot backdate it.
 resource dailyTable 'Microsoft.OperationalInsights/workspaces/tables@2025-07-01' = {
   parent: workspace
   name: dailyTableName
@@ -217,10 +164,8 @@ resource dailyTable 'Microsoft.OperationalInsights/workspaces/tables@2025-07-01'
   }
 }
 
-// `kind: 'Direct'` is what lets a client POST straight to the rule's own ingestion endpoint. The
-// alternative is a Data Collection Endpoint resource, which is only needed to put ingestion behind
-// Private Link — and this landing zone's `Deny-PublicPaaSEndpoints` policy applies to PaaS
-// accounts, not to the Microsoft-managed endpoint a Direct DCR exposes.
+// Direct kind: clients POST to the rule's own endpoint with no Data Collection Endpoint, and the
+// landing zone's Deny-PublicPaaSEndpoints policy does not cover that managed endpoint.
 resource dcr 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
   name: dcrName
   location: location
@@ -234,9 +179,7 @@ resource dcr 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
       'Custom-${auditTableName}': {
         columns: auditColumns
       }
-      // The summary rule writes the rollup table directly and needs no stream. This one exists for
-      // scripts/import-penguin-history.js, which posts historical rollup rows through the ingestion
-      // API — the only way into the table from outside the workspace.
+      // Only for scripts/import-penguin-history.js; the summary rule writes the table without a stream.
       'Custom-${dailyTableName}': {
         columns: dailyColumns
       }
@@ -254,22 +197,15 @@ resource dcr 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
         streams: [ 'Custom-${eventsTableName}' ]
         destinations: [ 'analyticsWorkspace' ]
         outputStream: 'Custom-${eventsTableName}'
-        // Identity minimisation already happened in the ingest Function, and the stream declares no
-        // SourceIp column — so there is nothing to strip. `project-away SourceIp` here would fail
-        // the transform on a column that does not exist.
+        // The stream has no SourceIp, so `project-away SourceIp` would fail the transform.
         transformKql: 'source'
       }
       {
         streams: [ 'Custom-${auditTableName}' ]
         destinations: [ 'analyticsWorkspace' ]
         outputStream: 'Custom-${auditTableName}'
-        // The IP mask lives HERE rather than in the app, so it cannot be bypassed by whatever calls
-        // the ingestion endpoint — including DEMI, which writes audit rows directly. Keeps the first
-        // two octets, enough to tell "inside the gov network" from "not", and drops anything that is
-        // not dotted-quad (IPv6, 'unknown') to 'redacted' rather than passing it through unmasked.
-        //
-        // `extract` is called twice instead of stashing a temp column: a transform's output columns
-        // must match the destination table, and a leftover scratch column is one more thing to strip.
+        // Masked here so no caller, DEMI included, can bypass it: two octets kept, non-IPv4 'redacted'.
+        // `extract` runs twice because a scratch column would have to match the destination table.
         transformKql: 'source | extend SourceIp = iff(isempty(extract(@"^(\\d{1,3}\\.\\d{1,3})\\.", 1, SourceIp)), "redacted", strcat(extract(@"^(\\d{1,3}\\.\\d{1,3})\\.", 1, SourceIp), ".0.0"))'
       }
       {
@@ -287,8 +223,7 @@ resource dcr 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
   ]
 }
 
-// Monitoring Metrics Publisher. Publish-only: the right to SEND data to this rule and no right to
-// read anything back. A writer is not a reader.
+// Monitoring Metrics Publisher: can send to this rule, cannot read anything back.
 var monitoringMetricsPublisherRoleId = '3913510d-42f4-4e42-8a64-420c390055eb'
 
 resource publisherAssignments 'Microsoft.Authorization/roleAssignments@2022-04-01' = [
@@ -303,9 +238,8 @@ resource publisherAssignments 'Microsoft.Authorization/roleAssignments@2022-04-0
   }
 ]
 
-// Log Analytics Reader on the workspace, for a principal that reads the record without running this
-// API — eagle-demi, whose audit viewer unions EagleAudit_CL with its own rows. On the workspace and
-// not the DCR: reading is not what a publisher grant covers.
+// Log Analytics Reader for readers outside this API, such as eagle-demi's audit viewer. Scoped to the
+// workspace because a DCR grant cannot read.
 var logAnalyticsReaderRoleId = '73c42c96-874c-492b-b04d-ab87d138a893'
 
 resource readerAssignments 'Microsoft.Authorization/roleAssignments@2022-04-01' = [
@@ -320,12 +254,8 @@ resource readerAssignments 'Microsoft.Authorization/roleAssignments@2022-04-01' 
   }
 ]
 
-// No time filter and no bin on the aggregation window: `binSize` already defines it, and the
-// destination rows carry `_BinStartTime`. `Day` is projected anyway because the history import needs
-// the column, and at binSize 1440 the day bin and the rule's own bin coincide.
-//
-// `isActive` is absent because it cannot be set: it is read-only on this type (bicep BCP073), so the
-// what-if line proposing its removal is one ARM does not act on.
+// No time filter or bin: binSize defines the window. `isActive` is read-only on this type (BCP073),
+// so the what-if line removing it is not acted on.
 resource eventsDailyRollup 'Microsoft.OperationalInsights/workspaces/summaryLogs@2025-07-01' = {
   parent: workspace
   name: 'eagle-events-daily'
@@ -342,19 +272,13 @@ resource eventsDailyRollup 'Microsoft.OperationalInsights/workspaces/summaryLogs
   }
   dependsOn: [
     eventsTable
-    // Load-bearing, not tidiness. Without it the rule and its destination deploy in parallel, and a
-    // rule that reaches its first run before the table exists CREATES the destination itself — at
-    // the workspace default retention, which is the whole defect `dailyTable` exists to avoid.
+    // Without it the rule can run first and create the table at the workspace default retention.
     dailyTable
   ]
 }
 
-// The other half of fire-and-forget. The ingest writer never fails a request when Log Analytics is
-// unreachable; it drops the batch into the application logger instead. That is only a recovery path
-// if somebody finds out it happened.
-//
-// The query runs against the APPLICATION workspace, not this one — by the time the writer is logging
-// a drop, this workspace is precisely what it could not reach.
+// The ingest writer logs dropped batches instead of failing requests; this alert surfaces them. It
+// queries the app workspace because a drop means this one was unreachable.
 resource dropAlert 'Microsoft.Insights/scheduledQueryRules@2022-06-15' = if (!empty(appLogsWorkspaceId)) {
   name: 'analytics-drop-${environmentName}'
   location: location
@@ -363,8 +287,7 @@ resource dropAlert 'Microsoft.Insights/scheduledQueryRules@2022-06-15' = if (!em
   properties: {
     displayName: 'Analytics rows dropped'
     description: 'The ingest writer gave up on a batch. Those rows exist only in the application log, and only for as long as its retention.'
-    // Error, not warning: EagleAudit_CL travels through the same writer, so a dropped batch can be a
-    // gap in the audit trail rather than a missing chart point.
+    // Error, not warning: audit rows share this writer, so a drop can be a gap in the audit trail.
     severity: 1
     enabled: true
     scopes: [ appLogsWorkspaceId ]
@@ -373,13 +296,8 @@ resource dropAlert 'Microsoft.Insights/scheduledQueryRules@2022-06-15' = if (!em
     criteria: {
       allOf: [
         {
-          // `AppTraces` is the workspace-based Application Insights table the logger lines land in —
-          // not `traces`, which is the classic schema and does not exist here.
-          //
-          // `contains`, not `has`: `has` matches whole terms and the tokeniser treats brackets as
-          // separators, so whether `has "[analytics] dropped"` matches depends on how the term
-          // sequence is split. At this volume the indexed lookup is worth nothing, and an alert that
-          // silently never matches is worse than no alert.
+          // AppTraces, not the classic `traces`. `contains`, not `has`: `has` splits terms on brackets,
+          // so it may never match "[analytics] dropped".
           query: 'AppTraces | where Message contains "[analytics] dropped"'
           timeAggregation: 'Count'
           operator: 'GreaterThan'

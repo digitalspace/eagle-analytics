@@ -8,12 +8,8 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 /**
- * azure/main.bicep, compiled the way the PR Validation workflow compiles it, then read as the ARM
- * template Azure would receive. The header values are no longer template inputs: the app settings
- * are Key Vault references, and the identity that resolves them is granted read on the vault.
- *
- * Compiled rather than grepped: the secret URI is composed from three pieces across two files, and
- * the source text of any one of them says nothing about what the Function App would actually get.
+ * azure/main.bicep compiled as PR Validation does, then read as ARM. Not grepped: the secret URI is
+ * composed from three pieces across two files, so no one source line shows what the app gets.
  */
 
 const AZURE_DIR = path.join(__dirname, '..', 'azure');
@@ -105,9 +101,8 @@ test('the app resolves its Key Vault references with the identity attached to it
   ]);
 });
 
-// demi-kv-<env> is publicNetworkAccess=Disabled, and App Service resolves a reference over the app's
-// own outbound path rather than as a trusted service. With no subnet both header settings resolve to
-// nothing and every guarded route answers 401.
+// demi-kv-<env> is private, and App Service resolves references over the app's own outbound path,
+// so with no subnet both header settings resolve to nothing and guarded routes answer 401.
 test('the app integrates with the subnet its vault answers on', { skip: noAzureCli }, () => {
   const site = functionApp();
   const module = moduleNamed('deploy-api-function-flex');
@@ -122,7 +117,7 @@ test('the subnet is required, not defaulted', { skip: noAzureCli }, () => {
   assert.ok(!('defaultValue' in template.parameters.vnetSubnetId), 'vnetSubnetId has a default');
 });
 
-// Fixed strings in both environments; a parameter for them was config for a value that never varies.
+// Fixed strings in both environments, so not parameters.
 test('the secret names are fixed in the template, not passed in', { skip: noAzureCli }, () => {
   assert.strictEqual(template.variables.apimSharedHeaderSecretName, 'analytics-shared-header');
   assert.strictEqual(template.variables.auditSharedHeaderSecretName, 'analytics-audit-header');
@@ -137,8 +132,7 @@ test('the resolving identity is the one the identity module creates', { skip: no
   );
 });
 
-// The two @secure() params that used to carry these values are gone: a secure param still puts the
-// value in the operator's shell and in the deployment's own parameter record.
+// No @secure() params: a secure param still puts the value in the shell and the deployment record.
 test('no template parameter carries a header value', { skip: noAzureCli }, () => {
   const secureParams = Object.entries(template.parameters)
     .filter(([, definition]) => definition.type === 'securestring')

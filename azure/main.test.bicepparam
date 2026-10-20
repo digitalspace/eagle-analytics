@@ -1,49 +1,35 @@
 using './main.bicep'
 
-// Test (staging): c4b0a8-test-rg in c4b0a8-test (7897ceb1-9a86-4639-87d7-7f9ff67142b3).
-// Deploy with ./scripts/deploy-infra.sh test.
+// Test: c4b0a8-test-rg in c4b0a8-test. Deploy and Front Door id lookup: README "The estate".
 
 param environmentName = 'test'
 param location = 'canadacentral'
 
-// demi-identity-test. Publish-only on the analytics DCR, so DEMI's auditEvent() writes EagleAudit_CL
-// rows without a second pipeline. Read 2026-09-05:
-//   az identity show -n demi-identity-test -g c4b0a8-test-rg --query principalId
+// demi-identity-test's principalId.
 param demiIdentityPrincipalId = '388ed601-3565-4932-a5b8-4d7b543e35a3'
 
-// The workspace behind eagle-insights-test, confirmed from the component's WorkspaceResourceId — not
-// assumed from the name. Same resource group, so the reader grant is made by the template.
+// From eagle-insights-test's WorkspaceResourceId, not assumed from the name. Same group: template grants reader.
 param eagleLogsWorkspaceId = '/subscriptions/7897ceb1-9a86-4639-87d7-7f9ff67142b3/resourceGroups/c4b0a8-test-rg/providers/Microsoft.OperationalInsights/workspaces/eagle-logs-test'
 
 param demiAuditWorkspaceId = '/subscriptions/7897ceb1-9a86-4639-87d7-7f9ff67142b3/resourceGroups/c4b0a8-test-rg/providers/Microsoft.OperationalInsights/workspaces/demi-audit-test'
 
-// Existing component in this resource group. main.bicep reads its connection string; the value never
-// appears in a parameter file.
+// Existing component; main.bicep reads its connection string.
 param appInsightsName = 'eagle-insights-test'
 
 param keycloakUrl = 'https://test.loginproxy.gov.bc.ca/auth'
 
-// eagle-demi-admin's Keycloak client, `eagle-admin-console` — the id in its public/env.js, and the
-// same one eagle-demi's own allowedClients names. Not the repository name.
+// eagle-demi-admin's client id (its public/env.js), the same one eagle-demi's allowedClients names.
 param keycloakAllowedClients = 'eagle-admin-console'
 
-// eagle-edge-test's own id, from:
-//   az afd profile show -g c4b0a8-test-rg -n eagle-edge-test --query frontDoorId
-// Out of the environment for the same reason as the header values below: it decides whether
-// X-Azure-SocketIP is trusted, so a caller who knows it can choose its own client address.
+// From the environment: it gates trust in X-Azure-SocketIP, so knowing it lets a caller pick its address.
 param frontDoorId = readEnvironmentVariable('FRONT_DOOR_ID')
 
-// The OpenShift cluster's egress pool, measured 2026-09-07 from what APIM stamped in X-Client-Ip. The
-// same four addresses in both environments. Unlike frontDoorId above these are safe in the open: APIM
-// sets X-Client-Ip with `override`, so knowing them does not let a caller claim to be the cluster.
+// OpenShift egress pool as APIM stamps it in X-Client-Ip, same in both environments. Safe in the open:
+// APIM sets X-Client-Ip with `override`, so knowing them does not let a caller claim to be the cluster.
 param trustedProxyIps = '142.34.194.121,142.34.194.122,142.34.194.123,142.34.194.124'
 
-// The two AFD hostnames carry a deploy-time hash and cannot be composed: eagle-public's is in
-// eagle-edge/README.md, eagle-demi-admin's in eagle-demi/azure/main.test.bicepparam. Third is
-// eagle-admin on OpenShift test. Both the apex and the www host serve the public site, same as prod.
-// localhost is a developer running an admin app against the deployed gateway, and is deliberately
-// absent from prod.
-// eagle-public React preview (next site).
+// AFD hostnames carry a deploy-time hash, so they are listed, not composed. localhost lets a developer
+// run an admin app against the test gateway; prod omits it.
 param allowedOrigins = [
   'https://eagle-public-test-dbg8ghh8gjd0bscx.a02.azurefd.net'
   'https://eagle-public-next-test-gtaqa6dvexc6edhg.a02.azurefd.net'
@@ -57,16 +43,11 @@ param allowedOrigins = [
 // demi-alerts-test, same on-call address as the rest of the estate.
 param alertActionGroupId = '/subscriptions/7897ceb1-9a86-4639-87d7-7f9ff67142b3/resourceGroups/c4b0a8-test-rg/providers/microsoft.insights/actionGroups/demi-alerts-test'
 
-// Both header values live in demi-kv-test, which is in this same resource group, so
-// keyVaultResourceGroup keeps its default. The app settings are references to the secrets; nothing
-// in this file or in the deployment history carries a value. Secret names keep their defaults
-// (analytics-shared-header, analytics-audit-header).
+// demi-kv-test is in this group, so keyVaultResourceGroup and the secret names keep their defaults.
 param keyVaultName = 'demi-kv-test'
 
-// snet-demi-func-fc1-test, in c4b0a8-test-networking: the landing-zone subnet delegated to
-// Microsoft.App/environments, verified 2026-09-11 as a /27 with an NSG. Shared with
-// demi-api-fc-test — a delegated subnet takes more than one Flex app, but a /27 leaves 27
-// addresses for both apps' instances, so raising either maximumInstanceCount needs a wider subnet.
+// Landing-zone /27 shared with demi-api-fc-test: raising either app's maximumInstanceCount needs a
+// wider subnet.
 param vnetSubnetId = '/subscriptions/7897ceb1-9a86-4639-87d7-7f9ff67142b3/resourceGroups/c4b0a8-test-networking/providers/Microsoft.Network/virtualNetworks/c4b0a8-test-vwan-spoke/subnets/snet-demi-func-fc1-test'
 
 param contactEmails = [ readEnvironmentVariable('BUDGET_CONTACT_EMAIL') ]
