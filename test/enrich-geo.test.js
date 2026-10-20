@@ -44,8 +44,7 @@ const PRIVATE = [
   '::',
   'fe80::1ff:fe23:4567:890a',
   'fd00::1',
-  // Upper case matters: an IPv6 address is case-insensitive, and penguin-analytics' version of this
-  // check treated FD00::1 as routable.
+  // IPv6 is case-insensitive, so the upper-case form must be caught too.
   'FD00::1',
   'fc00::1',
   '::ffff:192.168.1.1',
@@ -167,8 +166,6 @@ const CALLERS = [
     expected: { ip: '2606:4700:4700::1111', trusted: false }
   },
   {
-    // Front Door is not in the path yet, but when it is, its own view of the socket beats everything
-    // below it.
     name: 'the socket address wins when the request really came through our Front Door',
     headers: {
       'x-azure-fdid': 'front-door-id-for-tests',
@@ -215,9 +212,8 @@ test('clientIp is the resolved address on its own', () => {
   assert.strictEqual(geo.clientIp(request(headers)), '24.108.0.1');
 });
 
-// An instance with nothing trusted cannot tell our cluster from any other caller, so it stops at the
-// address APIM saw and nobody is exempt from the cap. Fail-closed: an unset setting narrows what is
-// trusted, it never widens it.
+// Fail-closed: with nothing trusted the cluster looks like any caller, so resolution stops at the
+// address APIM saw and nobody is exempt from the cap.
 test('with no trusted proxy the caller is the address APIM saw, and is not trusted', () => {
   const untrusting = loadModule('ingest/enrich-geo', { TRUSTED_PROXY_IPS: '' });
   const headers = { 'x-forwarded-for': `24.108.0.1, ${APIM_HOP}`, 'x-client-ip': CLUSTER };

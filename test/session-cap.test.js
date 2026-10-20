@@ -12,7 +12,6 @@ const { logger } = require('../src/utils/logger');
 
 const HOUR_MS = 3600000;
 
-/** Offer `times` events from one session, so a test body says what it wants and not how it counts. */
 function offer(sessionId, times) {
   const answers = [];
   for (let i = 0; i < times; i += 1) answers.push(allow(sessionId));
@@ -78,9 +77,8 @@ test('the count starts again in the next hour', (t) => {
   assert.strictEqual(allow('session-a'), true);
 });
 
-// A server-side producer sends no sessionId (src/ingest/validate.js). Pooling every such event under
-// one empty key would throttle eagle-api and eagle-demi as if they shared a browser session; the
-// per-address cap is what bounds them.
+// A server-side producer sends no sessionId; pooling those under one empty key would throttle
+// eagle-api and eagle-demi as one session. The per-address cap bounds them instead.
 test('an event with no session is not counted against one', (t) => {
   _reset();
   t.after(_reset);

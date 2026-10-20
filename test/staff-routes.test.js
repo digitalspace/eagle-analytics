@@ -12,11 +12,8 @@ const helper = require('./helpers/staff-token');
 const keycloak = require('../src/auth/keycloak');
 const { dispatch } = require('../src/http/router');
 
-/**
- * The staff guard belongs to the route table, not to a controller, so this is where "every read and
- * dashboard route is closed to an anonymous caller" is checked. Take a `guards: [staffGuard]` off any
- * row in src/http/routes.js and one of these turns green-to-red.
- */
+// The staff guard belongs to the route table, not a controller, so this is where every read and
+// dashboard route is proven closed to an anonymous caller.
 const STAFF_ROUTES = [
   ['POST', '/analytics/query'],
   ['GET', '/analytics/query/schema'],

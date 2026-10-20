@@ -31,11 +31,8 @@ beforeEach(() => runner._setRunner(async () => oneRow()));
 
 afterEach(() => runner._resetRunner());
 
-/**
- * `user` is what src/auth/keycloak.js staffGuard leaves on the request. The route table runs that
- * guard before any handler here; test/staff-routes.test.js covers that wiring, and
- * test/keycloak.test.js covers what the guard admits.
- */
+// `user` is what staffGuard (src/auth/keycloak.js) leaves on the request; the guard and its wiring
+// are covered by test/keycloak.test.js and test/staff-routes.test.js.
 function staffRequest(roles, extra = {}) {
   return { ...helper.request({ body: BODY, ...extra }), user: { sub: 'test-sub', username: 'jdoe@idir', roles } };
 }

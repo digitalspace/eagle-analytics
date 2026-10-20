@@ -67,9 +67,8 @@ for VAR in "${REQUIRED_VARS[@]}"; do
     echo -e "${RED}✗ ${VAR} is not set. See --help.${NC}" >&2
     exit 2
   fi
-  # `export X="$(...)"` keeps a trailing newline and `echo` without -n leaves a literal backslash-n.
-  # Either travels into the app settings verbatim, and a Front Door id that does not match what the
-  # edge sends makes the app read the caller's own address as the visitor's. Values are not printed.
+  # A stray newline or literal \n reaches the app settings verbatim; a Front Door id that then fails to
+  # match makes the app take its caller's address as the visitor's. Values are never printed.
   case "$VALUE" in
     *[[:space:]]*|*'\n'*)
       echo -e "${RED}✗ ${VAR} contains whitespace or an escaped newline.${NC}" >&2

@@ -1,9 +1,6 @@
 'use strict';
 
-/**
- * The handful of TableClient methods src/store/dashboards-table.js uses, in memory: entity keys,
- * 404s shaped like a RestError, and a partition-filtered listing.
- */
+// In-memory TableClient: only the methods src/store/dashboards-table.js uses, with RestError-shaped 404s.
 
 const compositeKey = (partitionKey, rowKey) => `${partitionKey}\x00${rowKey}`;
 

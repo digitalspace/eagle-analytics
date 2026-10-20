@@ -1,8 +1,7 @@
 'use strict';
 
-// Cross-workspace measures take a workspace from configuration, not from a request, and address it by
-// its customer id: azure/main.bicep reads the GUID off each workspace, because a bare name is
-// ambiguous when the workspace lives in another resource group.
+// Cross-workspace measures address a configured workspace by customer id: a bare name is ambiguous
+// when the workspace lives in another resource group.
 process.env.EAGLE_LOGS_WORKSPACE = '4a1b3c5d-1111-4222-8333-aaaaaaaaaaaa';
 process.env.DEMI_AUDIT_WORKSPACE = '7f2e9d8c-4444-4555-8666-bbbbbbbbbbbb';
 
@@ -34,9 +33,8 @@ test('the range is returned as a timespan and never appears in the query text', 
   assert.ok(!text.includes('2026-08-29'), text);
 });
 
-// An imported row carries import time in TimeGenerated and its real date in Day, and the API's
-// timespan filters TimeGenerated, so the rollup is bounded inside the text and the timespan is widened
-// past anything the two timestamps can be apart by (docs/MIGRATION.md).
+// The API timespan filters TimeGenerated, which on imported rows is import time; the real date is Day.
+// So the text bounds Day and the timespan is widened past any gap between them (docs/EVENT-SCHEMA.md).
 test('the daily source is bounded on Day, with a timespan widened by the rollup retention', () => {
   const { kql: text, timespan } = compile({ measure: 'events', source: 'daily', range: WEEK });
   const [from, to] = timespan.split('/');

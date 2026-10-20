@@ -1,19 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
-/**
- * Import penguin-analytics history into EagleEventsDaily_CL.
- *
- * penguin kept raw events in TimescaleDB; only its daily aggregates are worth carrying over, so this
- * reads CSV exported from two of its views and posts one rollup row per CSV row. docs/MIGRATION.md
- * has the export commands.
- *
- * TimeGenerated IS NOW, deliberately: the Logs Ingestion API rewrites the timestamp on rows older
- * than two days, so a historical date cannot travel in it. The real date goes in `Day`, which is the
- * same column the live summary rule fills (azure/modules/event-logs.bicep).
- *
- *   node scripts/import-penguin-history.js --env test --file daily_events_summary.csv --dry-run
- */
+// TimeGenerated is now on purpose: the Logs Ingestion API rewrites timestamps older than two days.
+// The real date goes in `Day`, the column the live summary rule fills (azure/modules/event-logs.bicep).
 
 const fs = require('fs');
 
@@ -83,7 +72,7 @@ function records(text) {
   return rows.slice(1).map((row, position) => {
     const record = {};
     header.forEach((name, column) => { record[name] = row[column] === undefined ? '' : row[column]; });
-    // The line in the file, so a message points at something the operator can open and look at.
+    // 1-based file line counting the header, so an error names a line the operator can open.
     record._line = position + 2;
     return record;
   });
@@ -121,11 +110,8 @@ function textField(record, field) {
 /** The name the client sends for a page view. docs/EVENT-SCHEMA.md is the contract for all of them. */
 const PAGE_VIEWED = 'Page Viewed';
 
-/**
- * penguin let the browser name its own events, so an export holds both the display names the client
- * now sends and older snake_case ones. Keys are lower-cased; a name nobody listed is carried through
- * as it stands, so an app-specific event keeps the name its dashboards already use.
- */
+// An export mixes the client's display names with older snake_case ones. Keys are lower-cased;
+// unlisted names pass through so an app-specific event keeps the name its dashboards use.
 const EVENT_NAMES = new Map([
   ['page_view', PAGE_VIEWED],
   ['session_start', 'Session Started'],
@@ -139,15 +125,8 @@ const EVENT_NAMES = new Map([
 
 const eventName = (raw) => EVENT_NAMES.get(raw.toLowerCase()) || raw;
 
-/**
- * Event names this product actually emits: the ones the client sends by itself, plus every literal
- * passed to `track()` in eagle-public and eagle-admin.
- *
- * penguin took the event name from the browser and stored it as free text, so its history also holds
- * scanner payloads — JNDI lookups, XXE, SQL — that a chart would show as event names and that no
- * validator ran on, because this script posts to the DCR rather than through POST /events. Anything
- * not named here is dropped rather than imported. Compared lower-cased.
- */
+// Client built-ins plus every `track()` literal in eagle-public and eagle-admin. penguin history holds
+// scanner payloads as event names, and this script posts to the DCR, skipping POST /events validation.
 const KNOWN_EVENTS = new Set([
   ...EVENT_NAMES.values(),
   'Bulk Download Failed',
@@ -187,10 +166,8 @@ const KNOWN_EVENTS = new Set([
   'Table Column Sorted'
 ].map((name) => name.toLowerCase()));
 
-/**
- * One EagleEventsDaily_CL row. ProjectId, Country and DeviceType are empty because penguin's rollups
- * carried no such dimension — a chart grouped by them shows imported history as one blank bucket.
- */
+// ProjectId, Country and DeviceType stay empty: penguin rollups had no such dimension, so a chart
+// grouped by them shows imported history as one blank bucket.
 function rollupRow(fields, env, now) {
   return {
     TimeGenerated: now,
@@ -230,7 +207,6 @@ const SHAPES = [
     map: (record, env, now) => rollupRow({
       day: dayField(record, 'last_viewed'),
       sourceApp: textField(record, 'source_app'),
-      // The view counts page views and carries no event type of its own.
       eventName: PAGE_VIEWED,
       page: textField(record, 'page_path'),
       events: countField(record, 'total_views'),
@@ -240,14 +216,7 @@ const SHAPES = [
   }
 ];
 
-/**
- * CSV text as rollup rows.
- *
- * @param {string} text CSV with a header row, as `\copy … csv header` writes it.
- * @param {{env: string, now?: Date}} options
- * @returns {{view: string, rows: object[], dropped: Map<string, number>}} dropped counts rows per
- *   event name that is not a known product event.
- */
+/** CSV as `\copy … csv header` writes it, to rollup rows; `dropped` counts rows per unknown event name. */
 function toDailyRows(text, { env, now = new Date() }) {
   const rows = records(text);
   if (rows.length === 0) throw new Error('the file has a header but no rows');
@@ -344,9 +313,8 @@ async function main(argv) {
     const rowsDropped = [...dropped.values()].reduce((total, count) => total + count, 0);
     logger.warn(`[import] dropped ${rowsDropped} row(s) with unknown event name, ${dropped.size} distinct`);
     if (args.verbose) {
-      // Truncated: these are whatever a scanner posted, and a 99-character payload in an operator's
-      // terminal is noise at best. Control characters go first: a name holding a newline would
-      // otherwise forge a log line of its own, indistinguishable from one this script wrote.
+      // Scanner payloads: truncate, and mask control characters so a name holding a newline cannot
+      // forge a log line of its own.
       for (const [name, count] of dropped) {
         const safe = [...name]
           .map((ch) => { const c = ch.codePointAt(0); return c < 0x20 || c === 0x7f ? '?' : ch; })

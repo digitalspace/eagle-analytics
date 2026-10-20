@@ -76,7 +76,7 @@ for (const status of [204, 304]) {
   });
 }
 
-/** The error handler is only reachable through a route, and /health is the one without guards. */
+/** The error handler is only reachable through a route, so /health is made to throw. */
 async function callThrowing(err) {
   const original = healthController.health;
   healthController.health = () => { throw err; };

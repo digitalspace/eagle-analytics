@@ -27,10 +27,8 @@ function body(over = {}) {
   return { name: 'Weekly traffic', shared: false, widgets: [widget()], ...over };
 }
 
-/**
- * The real store over an in-memory table: the authz rules under test are the ones the store's
- * partitioning enforces, so a hand-written store double would only test itself.
- */
+// The real store over an in-memory table: its partitioning is the authz under test, so a store
+// double would only test itself.
 function harness(t, user) {
   const table = useFakeTable(t, store);
   let current = user;
@@ -39,8 +37,7 @@ function harness(t, user) {
     as(next) { current = next; },
     async call(handler, { id, payload } = {}) {
       const res = makeRes('test-request');
-      // `user` is what src/auth/keycloak.js staffGuard leaves on the request; the route table runs it
-      // before any handler here, and test/staff-routes.test.js covers that wiring.
+      // `user` as staffGuard leaves it; test/staff-routes.test.js covers that the guard runs first.
       await handler({ params: id ? { id } : {}, body: payload, headers: {}, user: current }, res);
       return { status: res.statusCode, json: res.body ? JSON.parse(res.body) : undefined };
     }
