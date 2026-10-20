@@ -1,19 +1,7 @@
 'use strict';
 
-/**
- * The only writer into the analytics workspace: buffered rows, sent through the Logs Ingestion API
- * of a Direct data collection rule (azure/modules/event-logs.bicep).
- *
- *   Custom-EagleEvents_CL       product analytics, no durable identity.
- *   Custom-EagleAudit_CL        staff actions, identity-bearing.
- *   Custom-EagleEventsDaily_CL  the rollup, named here but written only by the history import.
- *
- * THIS MODULE MUST NEVER FAIL A REQUEST. enqueue() returns after appending to memory; the network
- * call happens on a timer. A failed send is logged and dropped, never thrown at the caller.
- *
- * With no EVENTS_DCR_ENDPOINT the module is inert: local development, tests, and any environment
- * where the DCR is not deployed yet.
- */
+// MUST NEVER FAIL A REQUEST: enqueue() only buffers, the send runs on a timer, and a failed send is
+// logged and dropped. With no EVENTS_DCR_ENDPOINT (local, tests) the module is inert.
 
 const config = require('../config');
 const { logger } = require('../utils/logger');
@@ -21,9 +9,7 @@ const { logger } = require('../utils/logger');
 const EVENTS_STREAM = 'Custom-EagleEvents_CL';
 const AUDIT_STREAM = 'Custom-EagleAudit_CL';
 
-// Declared here because this file is where a stream name is defined, but deliberately not buffered:
-// nothing in the request path writes rollup rows. The summary rule fills the table inside the
-// workspace, and scripts/import-penguin-history.js posts to this stream once, by hand.
+// Not buffered: the summary rule fills it, and only scripts/import-penguin-history.js posts to it.
 const DAILY_STREAM = 'Custom-EagleEventsDaily_CL';
 
 // One buffer per stream: the ingestion API takes one stream per call.
@@ -36,8 +22,7 @@ let flushTimer = null;
 let warnedDisabled = false;
 let client = null;
 
-// Injection seam for test/dcr-writer.test.js. Real code never passes anything here; one function
-// rather than a transport abstraction, because there is one real implementation.
+// Test seam: _setTransport swaps it.
 let sendBatch = uploadToDcr;
 
 function enabled() {
@@ -75,10 +60,7 @@ function enqueue(stream, row) {
   }
 }
 
-/**
- * Split rows into batches under both ceilings. The byte one is what matters: the ingestion API
- * rejects a body over 1 MB, and a row carrying a large Detail object can be tens of kilobytes.
- */
+/** Batches under both caps. Bytes matter most: the API rejects a body over 1 MB, and Detail can be large. */
 function batches(rows, maxCount, maxBytes) {
   const out = [];
   let current = [];
@@ -108,9 +90,8 @@ async function uploadToDcr(stream, rows) {
   await client.upload(config.eventsDcrImmutableId, stream, rows);
 }
 
-// Every drain still on the wire. enqueue() starts one without awaiting it, so without this a flush
-// from the shutdown hook can return while an earlier batch is mid-upload, and that batch goes away
-// with the worker.
+// enqueue() does not await its flush, so without this set the shutdown flush could return while an
+// earlier batch is mid-upload, and that batch dies with the worker.
 const inFlight = new Set();
 
 /** Drain every buffer, and every drain another caller already started. */
@@ -142,17 +123,11 @@ async function flush() {
   while (inFlight.size > 0) await Promise.all([...inFlight]);
 }
 
-// How many causes a drop line reports. Every row in a batch goes to one DCR, so the causes repeat;
-// three distinct ones is already enough to tell a bad role assignment from a throttled workspace.
+// A batch goes to one DCR so causes repeat; three tell a bad role from a throttled workspace.
 const MAX_REPORTED_CAUSES = 3;
 
-/**
- * @azure/monitor-ingestion rejects with an AggregateLogsUploadError whose own `.message` is the
- * literal `undefined\n}` — its constructor interpolates an argument the SDK never passes. The
- * status code and text are on `errors[i].cause`, a RestError. The array is the whole test: the SDK
- * constructor always assigns `.errors`, while its isAggregateLogsUploadError also accepts a
- * name-only object with no `.errors` to read, which would throw here — inside a catch handler.
- */
+// The SDK's AggregateLogsUploadError has `.message` `undefined\n}`; the cause sits on errors[i].cause.
+// Test the array, not the SDK's guard, which passes name-only objects and would throw in a catch.
 function isAggregateUploadError(err) {
   return Boolean(err) && Array.isArray(err.errors);
 }
@@ -179,9 +154,8 @@ function describeUploadError(err) {
 }
 
 /**
- * 401 and 403 mean the identity is not a Monitoring Metrics Publisher on the DCR (Owner does not
- * carry that data action). Waiting does not grant a role, so two more calls only cost latency on
- * the shutdown path and bury the one cause under three identical log lines.
+ * 401/403: the identity lacks Monitoring Metrics Publisher on the DCR (Owner does not carry it).
+ * A retry cannot grant a role; it only adds shutdown latency and duplicate log lines.
  */
 function isPermissionFailure(err) {
   const codes = causeStatusCodes(err);
@@ -197,9 +171,8 @@ async function sendWithRetry(stream, batch) {
     } catch (err) {
       if (attempt === 2 || isPermissionFailure(err)) {
         const tries = attempt + 1;
-        // Count and cause only, never the rows: SourceIp is masked by the DCR transform, and the
-        // application-log workspace is read by more people than the analytics one.
-        // analytics-drop-<env> alerts on this string.
+        // Never the rows: the app-log workspace has more readers than analytics, and SourceIp is
+        // masked only by the DCR transform. analytics-drop-<env> alerts on this string.
         logger.error(
           `[analytics] dropped ${batch.length} row(s) for ${stream} after ${tries} attempt${tries === 1 ? '' : 's'}: ${describeUploadError(err)}`
         );

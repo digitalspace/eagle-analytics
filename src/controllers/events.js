@@ -7,29 +7,13 @@ const ipCap = require('../ingest/ip-cap');
 const { allow } = require('../ingest/session-cap');
 const { toEventRow, validateEventBatch } = require('../ingest/validate');
 
-/**
- * POST /events — a batch of at most 50 product events.
- *
- * 202, not 200: the rows are buffered here and sent to the ingestion API on a timer, so at this point
- * they are accepted rather than stored. `dropped` is how many the per-session cap ignored and
- * `rejected` which entries failed validation; both are reported rather than hidden, so a producer can
- * see it is being throttled and can fix the events it still holds.
- *
- * 400 only when nothing was accepted: one malformed event must not cost the batch around it.
- *
- * The gateway and Origin checks are the route's guards, before this runs.
- */
+// 202: rows are buffered, not yet stored. 400 only when nothing was accepted, so one bad event does
+// not cost its batch; `dropped` and `rejected` tell the producer what to fix or slow down.
 async function events(req, res) {
-  // One resolution of the address, used for the cap and then for the location lookup.
   const { ip, trusted } = resolveCaller(req);
 
-  // Before validation, deliberately: an address over its cap should not cost this instance the work
-  // of parsing what it sent. 429 and not a silent drop, because a refused batch is the producer's to
-  // retry.
-  //
-  // Our own server-side producers are exempt: they reach APIM from the cluster's egress pool, which
-  // every browser behind the same cluster also comes out of, so one address cap cannot separate them
-  // and capping it refused eagle-api's batches on prod.
+  // Capped before validation so an over-cap address costs no parsing. Trusted proxies are exempt: the
+  // cluster egress pool is shared by eagle-api and browsers, so one address cap cannot split them.
   const offered = Array.isArray(req.body && req.body.events) ? req.body.events.length : 1;
   if (!trusted && !ipCap.allow(ip, offered)) {
     res.set('Retry-After', String(ipCap.RETRY_AFTER_SECONDS));
@@ -47,7 +31,6 @@ async function events(req, res) {
     return;
   }
 
-  // One lookup for the whole batch: every event in it arrived over the same connection.
   const geo = await geoFields(ip);
 
   let accepted = 0;

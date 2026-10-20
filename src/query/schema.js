@@ -1,63 +1,37 @@
 'use strict';
 
-/**
- * The whitelist, and the only place a table, column, aggregation or operator name is written.
- *
- * Nothing from a request body ever becomes KQL syntax: a request names a measure, a dimension, an
- * operator and a bin, each of which is a key in one of the objects below, and everything else it
- * carries becomes an escaped string literal (src/query/compile-kql.js).
- */
+// The only place a table, column, aggregation or operator name is written; requests name keys here.
 
-/** Raw events and the daily rollup, both in `analytics-logs-<env>` (azure/modules/event-logs.bicep). */
+// Both in `analytics-logs-<env>` (azure/modules/event-logs.bicep).
 const SOURCES = Object.freeze({
   raw: 'EagleEvents_CL',
   daily: 'EagleEventsDaily_CL'
 });
 
-/** Ranges past this many days read the rollup under `source: 'auto'`. */
 const AUTO_DAILY_MIN_DAYS = 30;
 
-/** `dailyRetentionDays` in azure/modules/event-logs.bicep. Bounds how stale a rollup row can be. */
+// Must match `dailyRetentionDays` in azure/modules/event-logs.bicep.
 const DAILY_RETENTION_DAYS = 730;
 
-/**
- * The rollup's own day bucket, and the reason the daily source is read by it: the Logs Ingestion API
- * rewrites TimeGenerated on anything older than two days, so an imported row carries import time
- * there and its real date only here (docs/MIGRATION.md).
- */
+// Logs Ingestion rewrites TimeGenerated older than two days, so an imported row keeps its real date
+// only in Day (docs/EVENT-SCHEMA.md).
 const DAILY_TIME_COLUMN = 'Day';
 
-/**
- * DEMI's own events, read cross-workspace.
- *
- * `DemiEventsHourly_CL` and not `DemiEvents_CL`: the raw table is on the Auxiliary plan, which
- * answers an interactive query with no rows at all (eagle-demi `azure/modules/audit-logs.bicep`,
- * and `src/controllers/admin-reads.js` reads the rollup for the same reason). The rollup is
- * Analytics-plan and holds pre-summed Events and Users, which is why the union is only offered
- * against the pre-summed `daily` shape.
- */
+// Not DemiEvents_CL: that table is on the Auxiliary plan, which returns no rows to an interactive
+// query. The hourly rollup is pre-summed, so the union is offered on the daily shape only.
 const DEMI_TABLE = 'DemiEventsHourly_CL';
 const DEMI_SOURCE_APP = 'eagle-demi';
 
-// The summary rule creates that table, so it keeps its workspace's default retention rather than one
-// of its own (eagle-demi azure/modules/audit-logs.bicep). Far shorter than our 730, so the union is
-// lopsided over a long range and the builder has to say so.
+// Workspace default retention (set in eagle-demi), far shorter than ours, so the builder warns.
 const DEMI_HOURLY_RETENTION_DAYS = 30;
 
 const DEMI_MEASURES = Object.freeze(['events', 'users']);
 
-/** Error counts come from the application workspace, not the analytics one. */
+// In the application workspace, not the analytics one.
 const ERRORS_TABLE = 'AppExceptions';
 
-/**
- * `aggregate` doubles as the availability map: a measure runs on exactly the sources it lists.
- *
- * Sessions and Users on `daily` are SUMS OF DAILY DISTINCT COUNTS, not distinct counts over the
- * range: the rollup stores one dcount per day, and per-day distinct counts cannot be added back
- * into a range-wide distinct count. Someone who visits on three days counts three times. The
- * builder labels this, and it is why `auto` only reaches for the rollup past a month, where the
- * shape of the curve is the question and the absolute number is not.
- */
+// `aggregate` is also the availability map. Daily sessions and users are sums of per-day dcounts, so
+// a three-day visitor counts three times; `auto` uses the rollup only past a month for that reason.
 const MEASURES = Object.freeze({
   events: {
     label: 'Events',
@@ -81,11 +55,8 @@ const MEASURES = Object.freeze({
   }
 });
 
-/**
- * `sources` is which tables carry the column. `demi` marks the three the DEMI union projects, and
- * `errorsColumn` is how a dimension is spelled in `AppExceptions` — the errors table names the
- * producing app `AppRoleName`, and the builder should not have to know that.
- */
+// `demi`: projected by the DEMI union. `errorsColumn`: the name in AppExceptions, so the builder
+// never has to know it.
 const DIMENSIONS = Object.freeze({
   SourceApp: { label: 'Source app', sources: ['raw', 'daily'], demi: true, errorsColumn: 'AppRoleName' },
   EventName: { label: 'Event', sources: ['raw', 'daily'], demi: true },
@@ -99,13 +70,13 @@ const DIMENSIONS = Object.freeze({
   City: { label: 'City', sources: ['raw'] }
 });
 
-/** Bin name to KQL timespan literal. `week` is 7d, so weeks start on the Unix epoch's Thursday. */
+// `week` is 7d, so weeks start on the Unix epoch's Thursday.
 const BINS = Object.freeze({ hour: '1h', day: '1d', week: '7d' });
 
 const FILTER_OPS = Object.freeze(['eq', 'in', 'contains']);
 
 const LIMITS = Object.freeze({
-  /** Raw retention is 400 days, so a longer window can only return a partial answer. */
+  // Raw retention: a longer window can only return a partial answer.
   maxRangeDays: 400,
   maxLimit: 1000,
   maxContainsValueLength: 200,
@@ -116,14 +87,13 @@ const LIMITS = Object.freeze({
   autoDailyMinDays: AUTO_DAILY_MIN_DAYS
 });
 
-/** Which operators a dimension accepts. `contains` scans, so it is offered on free text only. */
+// `contains` scans, so it is offered on free text only.
 function opsFor(dimension) {
   const meta = DIMENSIONS[dimension];
   if (!meta) return [];
   return meta.contains ? ['eq', 'in', 'contains'] : ['eq', 'in'];
 }
 
-/** Is `dimension` readable from `source`, given whether the DEMI union is in play? */
 function available(dimension, source, includeDemi = false) {
   const meta = DIMENSIONS[dimension];
   if (!meta) return false;
@@ -132,13 +102,12 @@ function available(dimension, source, includeDemi = false) {
   return includeDemi ? Boolean(meta.demi) : true;
 }
 
-/** How `dimension` is spelled in `source`. Differs only in the errors table. */
 function columnFor(dimension, source) {
   const meta = DIMENSIONS[dimension];
   return source === 'errors' ? meta.errorsColumn : dimension;
 }
 
-/** The whitelist as the UI builder consumes it: everything it may offer, and nothing it may not. */
+// What the UI builder may offer, and nothing it may not.
 function describe() {
   return {
     measures: Object.entries(MEASURES).map(([name, meta]) => ({

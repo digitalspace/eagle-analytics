@@ -75,15 +75,13 @@ test('TRUSTED_PROXY_IPS is read as a trimmed list', () => {
   assert.deepStrictEqual(config.trustedProxyIps, ['142.34.194.121', '142.34.194.122']);
 });
 
-// Nothing trusted is the safe default: every caller is located and capped by the last hop, which is
-// what this service did before the cluster's egress addresses were known.
+// Nothing trusted is the safe default: every caller is located and capped by the last hop.
 test('an unset TRUSTED_PROXY_IPS trusts no proxy', () => {
   assert.deepStrictEqual(loadConfig({ ENVIRONMENT: 'test' }).trustedProxyIps, []);
 });
 
-// App Service passes the reference string through as the value when it cannot read the secret, and
-// that string is public: the vault and secret names live in azure/. A non-empty check alone would let
-// it become the value the header guards compare against.
+// An unreadable secret arrives as the public reference string itself, so a non-empty check alone would
+// let it become the value the header guards compare against.
 const UNRESOLVED_REFERENCE =
   '@Microsoft.KeyVault(SecretUri=https://demi-kv-test.vault.azure.net/secrets/analytics-shared-header)';
 

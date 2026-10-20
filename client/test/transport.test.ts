@@ -164,8 +164,8 @@ describe('base URL trimming', () => {
   });
 
   it('finishes fast on long runs of slashes', () => {
-    // The old /\/+$/ needed ~13s on the second string: the run matches, $ fails, and the
-    // engine retries from every offset. A scan is linear, so both land in well under 100ms.
+    // A regex like /\/+$/ takes ~13s on the second string: the run matches, $ fails, and the
+    // engine retries from every offset. A linear scan keeps both well under 100ms.
     const allSlashes = 'https://ingest.test' + '/'.repeat(100_000);
     const slashesThenText = allSlashes + 'a';
 

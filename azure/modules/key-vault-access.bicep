@@ -1,9 +1,5 @@
-// Key Vault Secrets User for the analytics identity on demi-kv-<env>.
-//
-// Its own module because the vault is not always in the group this estate deploys to: in production
-// it lives in rg-demi-prod, and a role assignment is created in the group the deployment targets. The
-// caller scopes this module to the vault's group. Nothing here creates or writes a secret — the
-// values are set once by hand from the devbox, and the vault itself belongs to eagle-demi.
+// Own module so the caller can scope it to the vault's group (rg-demi-prod in prod). Writes no secret:
+// eagle-demi owns the vault and the values are set by hand from the devbox.
 
 @description('Name of the existing vault, in THIS module\'s resource group')
 param keyVaultName string
@@ -19,8 +15,7 @@ resource sharedSecretsVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
 
 resource secretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: sharedSecretsVault
-  // Same three inputs give the same name on every run, so a redeploy updates one assignment instead
-  // of failing on a duplicate.
+  // Deterministic name, so a redeploy updates the assignment instead of failing on a duplicate.
   name: guid(sharedSecretsVault.id, principalId, keyVaultSecretsUserRoleId)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultSecretsUserRoleId)

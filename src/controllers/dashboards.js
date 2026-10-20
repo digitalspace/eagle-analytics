@@ -1,16 +1,9 @@
 'use strict';
 
-/**
- * Saved dashboards, CRUD. Every route carries the route table's `staffGuard`, so `req.user` is the
- * staff identity here; sharing is the only way one user's dashboard becomes visible to another, and
- * only a sysadmin can change or delete somebody else's.
- */
-
 const { httpError } = require('../http/http-error');
 const { validateDashboard, isDashboardId } = require('../store/widget-schema');
 
-// Lazily resolved, so a cold start that only serves /health or ingest loads neither the Table client
-// nor the Azure credential behind it.
+// Lazy, so a cold start serving only /health or ingest skips the Table client.
 let cached = null;
 
 function store() {
@@ -27,8 +20,7 @@ function pathId(req) {
 }
 
 function notFound() {
-  // Same answer whether the dashboard is absent or belongs to someone who did not share it: a 403
-  // here would tell any staff member which ids exist in other people's partitions.
+  // Also for an unshared dashboard: a 403 would reveal which ids exist in other partitions.
   return httpError(404, 'Dashboard not found.');
 }
 
@@ -51,8 +43,7 @@ exports.put = async (req, res) => {
   const dashboard = validateDashboard({ ...body, id });
   const existing = await store().get(user.sub, id);
 
-  // An id absent from the caller's own partition and from the shared index is a create, even if
-  // another user happens to hold that id: their dashboard lives in their partition, untouched.
+  // An id another user holds unshared is still a create here; their partition stays untouched.
   let ownerId = user.sub;
   if (existing && existing.ownerId !== user.sub) {
     if (!isSysadmin(user)) throw httpError(403, 'Only the owner can change this dashboard.');

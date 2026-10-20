@@ -1,15 +1,5 @@
-// eagle-analytics — EPIC product analytics, serverless.
-//
-// Four things:
-//   1. `analytics-identity-<env>`   the principal every data plane grant is made to
-//   2. `analytics-logs-<env>`       the event and audit store, its DCR and its daily rollup
-//   3. `analytics-api-fc-<env>`     ingest and read API on Flex Consumption
-//   4. `analytics-budget-<env>`     monthly cost anomaly guard
-//
-// NOT here. The gateway in front of ingest is `demi-apim-<env>`, owned by eagle-demi: APIM
-// Consumption bills per call and a second instance would double a fixed cost for nothing. Front Door
-// routing lives in eagle-edge. Telemetry for the Function itself goes to the existing
-// eagle-insights-<env>, referenced below rather than rebuilt.
+// Not here: the gateway is demi-apim-<env> (a second Consumption APIM doubles a fixed cost), Front
+// Door routing is eagle-edge, and Function telemetry goes to the existing eagle-insights-<env>.
 targetScope = 'resourceGroup'
 
 @description('Azure region. Log Analytics and its DCR must share one.')
@@ -54,8 +44,7 @@ param keyVaultName string
 @description('Resource group holding that vault. Defaults to this deployment\'s group, which is right for test. Production\'s vault sits in rg-demi-prod while this deployment targets rg-eagle-public-prod, so prod passes it.')
 param keyVaultResourceGroup string = resourceGroup().name
 
-// Landing-zone networking, not ours: the subnet lives in c4b0a8-<env>-networking and is created by
-// the platform team. No default — an app deployed without it cannot read either header value.
+// Landing-zone subnet in c4b0a8-<env>-networking, made by the platform team; no default on purpose.
 @description('Existing subnet delegated to Microsoft.App/environments that the Function App integrates with. Required: the vault holding both header values only answers from inside the VNet.')
 param vnetSubnetId string
 
@@ -84,9 +73,7 @@ var defaultTags = {
   CostCenter: 'c4b0a8'
 }
 
-// Existing workspaces are addressed by splitting their resource id rather than by taking a second
-// name-and-group parameter for each: the id already carries both, and two parameters for one fact
-// drift. `[2]` is the subscription, `[4]` the resource group.
+// Split from the resource id ([2] subscription, [4] group) so a second parameter cannot drift from it.
 var eagleLogsSubscriptionId = split(eagleLogsWorkspaceId, '/')[2]
 var eagleLogsResourceGroup = split(eagleLogsWorkspaceId, '/')[4]
 var eagleLogsName = last(split(eagleLogsWorkspaceId, '/'))
@@ -94,15 +81,13 @@ var demiAuditSubscriptionId = split(demiAuditWorkspaceId, '/')[2]
 var demiAuditResourceGroup = split(demiAuditWorkspaceId, '/')[4]
 var demiAuditName = last(split(demiAuditWorkspaceId, '/'))
 
-// Read the connection string here rather than pass it in. It is a credential-shaped value (it
-// carries the ingestion key), and a param file in a public repository is the wrong place for it.
+// Read here, not passed in: the connection string carries the ingestion key and param files are public.
 resource appInsights 'Microsoft.Insights/components@2020-02-02' existing = {
   name: appInsightsName
 }
 
-// The cross-workspace legs of a compiled query address a workspace by its customer id, not its name:
-// a bare name resolves against the resource groups the caller can see, and demi-audit-prod lives in
-// another one. Reading the GUID here needs read access on both workspaces at deploy time.
+// Queries address workspaces by customer id: a name resolves only in groups the caller can see, and
+// demi-audit-prod is in another. Reading the GUID needs deploy-time read on both workspaces.
 resource eagleLogsWorkspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = {
   name: eagleLogsName
   scope: resourceGroup(eagleLogsSubscriptionId, eagleLogsResourceGroup)
@@ -113,18 +98,12 @@ resource demiAuditWorkspace 'Microsoft.OperationalInsights/workspaces@2023-09-01
   scope: resourceGroup(demiAuditSubscriptionId, demiAuditResourceGroup)
 }
 
-// A role assignment cannot be made outside the deployment's own resource group, so only the
-// workspaces that live here get one from this template. Anything else — demi-audit-prod, which sits
-// in rg-demi-prod — is granted by hand once, and the README says so.
-// Spelled out rather than read from `analyticsLogs.outputs.workspaceName`: these names end up in
-// role-assignment resource names, and a resource name cannot contain a runtime value.
+// Literal, not the module output: role-assignment names cannot hold runtime values. Workspaces in
+// other groups (demi-audit-prod) are granted by hand, as the README says.
 var analyticsWorkspaceName = 'analytics-logs-${environmentName}'
 
-// Versionless secret URIs, composed rather than read off the vault: the App Service resolver follows
-// a versionless URI to the current version on its own, and composing means the deployment needs no
-// data-plane read on a vault that only answers from inside the VNet.
-// Fixed on both sides: the same two names carry these values as APIM named values on
-// demi-apim-<env>. Nothing varies them per environment, so they are not parameters.
+// Composed versionless URIs: the resolver follows them to the current version, and the deploy needs no
+// read on a VNet-only vault. The names match the APIM named values on demi-apim-<env>.
 var apimSharedHeaderSecretName = 'analytics-shared-header'
 var auditSharedHeaderSecretName = 'analytics-audit-header'
 
@@ -138,8 +117,6 @@ var localWorkspaceNames = union(
   (demiAuditSubscriptionId == subscription().subscriptionId && demiAuditResourceGroup == resourceGroup().name) ? [ demiAuditName ] : []
 )
 
-// 1. Identity first: every grant below names its principal, and the Function App consumes its
-// client id as an app setting.
 module identity './modules/identity.bicep' = {
   name: 'deploy-identity'
   params: {
@@ -149,9 +126,7 @@ module identity './modules/identity.bicep' = {
   }
 }
 
-// 1b. Read rights on the vault, before anything that resolves a secret from it. A role assignment
-// only lands in the group the deployment targets, so a vault in another group takes its own module
-// scoped there — which is prod's case.
+// Own module scope: a role assignment lands only in the targeted group, and prod's vault is in another.
 module keyVaultAccess './modules/key-vault-access.bicep' = {
   name: 'deploy-key-vault-access'
   scope: resourceGroup(keyVaultResourceGroup)
@@ -161,8 +136,6 @@ module keyVaultAccess './modules/key-vault-access.bicep' = {
   }
 }
 
-// 2. The store. Both writers are granted publish on the DCR here, DEMI included — its audit writer
-// posts to this endpoint after the eagle-demi side of WP1 lands.
 module analyticsLogs './modules/event-logs.bicep' = {
   name: 'deploy-event-logs'
   params: {
@@ -173,15 +146,13 @@ module analyticsLogs './modules/event-logs.bicep' = {
       identity.outputs.principalId
       demiIdentityPrincipalId
     ]
-    // Read as well as write for DEMI: its audit viewer answers GET /admin/audit from the union of its
-    // own rows and EagleAudit_CL, which lives here.
+    // DEMI also reads: GET /admin/audit unions its own rows with EagleAudit_CL.
     readerPrincipalIds: [ demiIdentityPrincipalId ]
     appLogsWorkspaceId: eagleLogsWorkspaceId
     alertActionGroupId: alertActionGroupId
   }
 }
 
-// 3. The API. After the store, because it takes the DCR endpoint and the workspace GUID as settings.
 module apiFunctionFlex './modules/api-function-flex.bicep' = {
   name: 'deploy-api-function-flex'
   // Nothing in the params links the two, and an app that starts before the grant exists reads an
@@ -215,7 +186,6 @@ module apiFunctionFlex './modules/api-function-flex.bicep' = {
   }
 }
 
-// 4. Cost guard.
 module costBudget './modules/cost-budget.bicep' = {
   name: 'deploy-cost-budget'
   params: {
@@ -234,9 +204,9 @@ output apiFunctionAppName string = apiFunctionFlex.outputs.apiFunctionAppName
 // Publish target for scripts/package-api.py, and the container the geoip refresh uploads to.
 output storageAccountName string = apiFunctionFlex.outputs.storageAccountName
 output analyticsWorkspaceName string = analyticsLogs.outputs.workspaceName
-// The GUID the query API addresses the workspace by, and otherwise a portal lookup.
+// The GUID the query API addresses the workspace by, otherwise a portal lookup.
 output analyticsWorkspaceCustomerId string = analyticsLogs.outputs.workspaceCustomerId
-// Both halves of the ingestion URL. eagle-demi needs them for its own audit writer settings.
+// Both halves of the ingestion URL; eagle-demi needs them for its audit writer settings.
 output eventsDcrEndpoint string = analyticsLogs.outputs.dcrEndpoint
 output eventsDcrImmutableId string = analyticsLogs.outputs.dcrImmutableId
 output identityClientId string = identity.outputs.clientId

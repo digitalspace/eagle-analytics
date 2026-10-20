@@ -1,22 +1,5 @@
-// Analytics ingest and read API on Flex Consumption (FC1) — `analytics-api-fc-<env>`.
-//
-// Trimmed from the DEMI module of the same name. What is deliberately absent, and why:
-//   no private endpoints  nothing reaches this app privately — the gateway calls its public
-//                         hostname — and a private endpoint costs 9 CAD/month.
-//   no own Key Vault      the inbound secrets — the headers APIM stamps — are read from demi-kv-<env>,
-//                         the estate's one vault, as app-setting references. The MaxMind licence key
-//                         never reaches Azure: it is a GitHub secret used only by the geoip refresh
-//                         workflow.
-//
-// VNet integration is what makes those references resolve. demi-kv-<env> is
-// publicNetworkAccess=Disabled, forced by the landing zone's Deny-PublicPaaSEndpoints policy, and
-// App Service resolves an @Microsoft.KeyVault reference with a data-plane GET over the app's own
-// outbound path — it is not a Key Vault trusted service. Without the subnet both header settings
-// resolve to nothing and every guarded route answers 401.
-//
-// Nothing here holds a storage key: the deployment container, the host's own bookkeeping and the
-// dashboards table all authenticate as the user-assigned identity, and the account refuses shared
-// key auth outright.
+// No private endpoints: the gateway calls the public hostname. Header secrets come from demi-kv-<env>,
+// which is private-only, so the VNet subnet below is what lets their Key Vault references resolve.
 
 @description('Location for the Function App resources')
 param location string = resourceGroup().location
@@ -96,10 +79,7 @@ var apiAppName = 'analytics-api-fc-${environmentName}'
 var appServicePlanName = 'analytics-plan-fc-${environmentName}'
 var storageAccountName = take('analyticsfc${environmentName}${uniqueString(resourceGroup().id)}', 24)
 
-// Built-in data-plane roles. Blobs carry the deployment package, the host's leases and the GeoLite2
-// database; the table holds saved dashboards.
-// ponytail: Blob Data Contributor covers the deployment container and host leases; move to Blob Data
-// Owner (b7e6dc6d-f1e8-4753-8033-0f276bb0955b) if the host cannot start.
+// ponytail: Blob Data Contributor covers deploy and host leases; Blob Data Owner (b7e6dc6d-f1e8-4753-8033-0f276bb0955b) if the host cannot start.
 var blobDataContributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
 var tableDataContributorRoleId = '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
 var logAnalyticsReaderRoleId = '73c42c96-874c-492b-b04d-ab87d138a893'
@@ -116,8 +96,7 @@ resource apiStorage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
     supportsHttpsTrafficOnly: true
     minimumTlsVersion: 'TLS1_2'
     allowBlobPublicAccess: false
-    // No key exists to leak or to rotate. Every caller — the Flex host included — authenticates as
-    // the identity above, so a key in a pipeline variable cannot become the way in.
+    // Every caller, the Flex host included, uses the identity, so there is no key to leak or rotate.
     allowSharedKeyAccess: false
   }
 }
@@ -133,8 +112,7 @@ resource deployContainer 'Microsoft.Storage/storageAccounts/blobServices/contain
   name: 'deployment'
 }
 
-// GeoLite2-City.mmdb, replaced monthly by .github/workflows/refresh-geoip.yaml. A container rather
-// than a file in the package: the database outlives a deploy and is 60 MB.
+// GeoLite2-City.mmdb, refreshed monthly by refresh-geoip.yaml. Not in the package: 60 MB, outlives a deploy.
 resource geoipContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
   parent: blobService
   name: 'geoip'
@@ -178,11 +156,8 @@ resource tableDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-0
   }
 }
 
-// Log Analytics Reader on every workspace the read API queries — the analytics workspace itself, and
-// the application workspace it reads error counts from. On the workspace rather than a table: the
-// query API authenticates as this identity (src/query/run.js).
-//
-// A new assignment takes minutes to be honoured. Retry a 403, do not re-grant.
+// The query API authenticates as this identity (src/query/run.js). A new grant takes minutes to
+// apply: retry a 403, do not re-grant.
 resource readerWorkspaces 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = [
   for name in readerWorkspaceNames: {
     name: name
@@ -221,8 +196,7 @@ resource apiFunctionApp 'Microsoft.Web/sites@2023-12-01' = {
   location: location
   tags: tags
   kind: 'functionapp,linux'
-  // USER-assigned: the identity outlives the app, so its storage and workspace grants survive a
-  // redeploy and can be made before the app exists.
+  // User-assigned: its grants survive a redeploy and can be made before the app exists.
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: {
@@ -232,12 +206,9 @@ resource apiFunctionApp 'Microsoft.Web/sites@2023-12-01' = {
   properties: {
     serverFarmId: appServicePlan.id
     httpsOnly: true
-    // The path the Key Vault references below are resolved over. Flex routes all outbound traffic
-    // through this subnet; Log Analytics ingestion, storage and Keycloak are reached through the
-    // spoke's own egress.
+    // Key Vault references resolve over this subnet; Flex sends all outbound traffic through it.
     virtualNetworkSubnetId: virtualNetworkSubnetId
-    // Which identity resolves the Key Vault references below. Defaults to the system-assigned one,
-    // which this app does not have, so without this every reference resolves to nothing.
+    // Defaults to the system-assigned identity, which this app lacks, so references would resolve to nothing.
     keyVaultReferenceIdentity: identityId
     functionAppConfig: {
       deployment: {
@@ -264,19 +235,14 @@ resource apiFunctionApp 'Microsoft.Web/sites@2023-12-01' = {
     }
     siteConfig: {
       minTlsVersion: '1.2'
-      // WHOLE-COLLECTION PUT: a setting that exists on the live app but is absent from this list is
-      // DELETED by the next deploy. Everything the app reads is declared here, empty values
-      // included. No FUNCTIONS_WORKER_RUNTIME, FUNCTIONS_EXTENSION_VERSION,
-      // WEBSITE_NODE_DEFAULT_VERSION or WEBSITE_RUN_FROM_PACKAGE: Flex takes the runtime from
-      // `functionAppConfig.runtime` and rejects those four.
+      // Whole-collection PUT: a live setting missing here is deleted on deploy, so declare every one. Flex
+      // rejects FUNCTIONS_WORKER_RUNTIME, FUNCTIONS_EXTENSION_VERSION, WEBSITE_NODE_DEFAULT_VERSION, WEBSITE_RUN_FROM_PACKAGE.
       appSettings: [
         {
           name: 'ENVIRONMENT'
           value: environmentName
         }
-        // Identity-based, so no account key lands in app settings — which is the only option here,
-        // the account refusing shared key auth. The blob role assignment above is what makes the
-        // host able to start at all.
+        // Identity-based because the account refuses shared keys; the blob role above lets the host start.
         {
           name: 'AzureWebJobsStorage__accountName'
           value: apiStorage.name
@@ -289,14 +255,12 @@ resource apiFunctionApp 'Microsoft.Web/sites@2023-12-01' = {
           name: 'AzureWebJobsStorage__clientId'
           value: identityClientId
         }
-        // The Functions host emits request and dependency telemetry from this; index.js reads the
-        // same variable to decide whether to start the OpenTelemetry distro.
+        // Host telemetry; index.js also reads it to decide whether to start the OpenTelemetry distro.
         {
           name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
           value: appInsightsConnectionString
         }
-        // The distro in application code owns instrumentation; the platform agent as well would
-        // double-count telemetry.
+        // The in-code distro owns instrumentation; the platform agent as well would double-count.
         {
           name: 'APPLICATIONINSIGHTS_ENABLE_AGENT'
           value: 'false'
@@ -319,9 +283,7 @@ resource apiFunctionApp 'Microsoft.Web/sites@2023-12-01' = {
           name: 'ANALYTICS_WORKSPACE_CUSTOMER_ID'
           value: analyticsWorkspaceCustomerId
         }
-        // The cross-workspace legs of a compiled query reference these as workspace('<guid>'). A
-        // name would resolve against whatever resource groups the query identity can see, which is not
-        // the same set in every environment.
+        // Compiled queries use workspace('<guid>'); a name resolves differently per environment.
         {
           name: 'EAGLE_LOGS_WORKSPACE'
           value: eagleLogsWorkspaceCustomerId
@@ -335,8 +297,7 @@ resource apiFunctionApp 'Microsoft.Web/sites@2023-12-01' = {
           name: 'STORAGE_ACCOUNT_NAME'
           value: apiStorage.name
         }
-        // Keycloak — MUST be pinned per environment, or the read API validates staff tokens against
-        // the DEV realm.
+        // Pin per environment, or staff tokens are checked against the DEV realm.
         {
           name: 'KEYCLOAK_URL'
           value: keycloakUrl
@@ -353,9 +314,7 @@ resource apiFunctionApp 'Microsoft.Web/sites@2023-12-01' = {
           name: 'APIM_SHARED_HEADER_NAME'
           value: apimSharedHeaderName
         }
-        // Both header values are Key Vault references: the platform resolves them as
-        // keyVaultReferenceIdentity above, and the app reads a plain string. No value is in this
-        // template, in a param file or in a deployment history entry.
+        // Resolved by the platform as keyVaultReferenceIdentity, so no value sits in deployment history.
         {
           name: 'APIM_SHARED_HEADER_VALUE'
           value: '@Microsoft.KeyVault(SecretUri=${apimSharedHeaderSecretUri})'
@@ -388,9 +347,8 @@ resource apiFunctionApp 'Microsoft.Web/sites@2023-12-01' = {
   }
 }
 
-// `<app>.scm.azurewebsites.net` is internet-reachable and answers 401 rather than refusing, so
-// leaving basic auth on is an unthrottled credential-guessing surface. Nothing authenticates that
-// way: CI logs in with OIDC and publishes with `az functionapp deployment source config-zip`.
+// SCM is public and answers 401 rather than refusing, so basic auth is an unthrottled guessing surface.
+// Nothing needs it: CI signs in with OIDC and publishes with config-zip.
 resource apiScmBasicAuth 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2023-12-01' = {
   parent: apiFunctionApp
   name: 'scm'

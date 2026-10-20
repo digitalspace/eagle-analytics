@@ -12,7 +12,6 @@ const { logger } = require('../src/utils/logger');
 const MINUTE_MS = 60000;
 const ADDRESS = '198.51.100.7';
 
-/** Offer `times` single-event requests from one address, so a body says what it wants, not how it counts. */
 function offer(ip, times) {
   const answers = [];
   for (let i = 0; i < times; i += 1) answers.push(allow(ip, 1));

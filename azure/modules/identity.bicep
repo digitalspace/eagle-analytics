@@ -1,8 +1,5 @@
-// User-assigned managed identity for eagle-analytics.
-//
-// User-assigned rather than system-assigned so the DCR publisher grant, the workspace reader grants
-// and the storage data-plane grants can be made before the Function App exists and survive its
-// redeploy. The ingest Function, the read API and the operator scripts all run as this one.
+// User-assigned so every grant can be made before the Function App exists and survives its redeploy.
+// The ingest Function, the read API and the operator scripts all run as this one.
 
 @description('Location for the managed identity')
 param location string = resourceGroup().location

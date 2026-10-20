@@ -7,8 +7,6 @@ Product analytics for EPIC. An Azure Functions app (Node 22, Flex Consumption) t
 - answers metric queries for the dashboard screens in eagle-demi-admin,
 - stores saved dashboards in Table Storage.
 
-It replaces penguin-analytics.
-
 ## Endpoints
 
 Every route is served both under `/analytics` and at the root, because APIM and the nginx proxy mount
@@ -104,8 +102,8 @@ instead of serving an open or a permanently-401 API.
 | `DEMI_AUDIT_WORKSPACE` | empty | Customer id (GUID) of `demi-audit-<env>`, unioned in for pre-cutover audit rows |
 | `EAGLE_LOGS_WORKSPACE` | empty | Customer id (GUID) of the workspace behind `eagle-insights-<env>`, where the error measure reads |
 | `ENVIRONMENT` | `dev` | Labels every row and picks per-environment behaviour |
-| `EVENTS_DCR_ENDPOINT` | empty | Data collection endpoint for the events and audit tables. Empty turns ingest off |
-| `EVENTS_DCR_IMMUTABLE_ID` | empty | Immutable id of the data collection rule |
+| `EVENTS_DCR_ENDPOINT` | empty | Data collection endpoint for the events and audit tables, from the deployment output `eventsDcrEndpoint`: Azure assigns it when the rule is created, so it cannot be composed from the name. Empty turns ingest off |
+| `EVENTS_DCR_IMMUTABLE_ID` | empty | Immutable id of the data collection rule, from the deployment output `eventsDcrImmutableId` |
 | `FRONT_DOOR_ID` | empty | Front Door's own id. Only on a match is `X-Azure-SocketIP` trusted over `X-Forwarded-For` |
 | `IP_EVENT_CAP` | `600` | Events one client address may send per minute per instance; over that, `POST /events` answers `429` |
 | `KEYCLOAK_ALLOWED_CLIENTS` | empty | Comma list of client ids the read API accepts, matched on `aud` and `azp`. Empty admits nobody |
@@ -138,49 +136,48 @@ Infrastructure and application deploy separately, and only the application deplo
 
 ### The estate
 
-`scripts/deploy-infra.sh` runs from an operator login, never from CI. The management group forbids
-granting Contributor to anyone, so a CI identity cannot hold the rights an ARM deployment of this
-group needs; the reason is Azure policy, not caution about automation.
+`scripts/deploy-infra.sh` runs from an operator login, never from CI. The management group forbids granting Contributor to anyone. A CI identity therefore cannot hold the rights an ARM deployment of this group needs.
 
-The script needs `FRONT_DOOR_ID` and `BUDGET_CONTACT_EMAIL` exported in that shell, and
-`CONFIRM_PROD=yes` for a live prod deploy. The param files read both with no fallback, so a missing
-export fails the Bicep build instead of blanking a live app setting. The script also refuses a value
-carrying whitespace or a literal backslash-n, which is what `export X="$(…)"` and `echo` without `-n`
-leave behind: the app settings take it verbatim and nothing matches it afterwards.
+The script needs `FRONT_DOOR_ID` and `BUDGET_CONTACT_EMAIL` exported in that shell, and `CONFIRM_PROD=yes` for a live prod deploy. The param files read both with no fallback, so a missing export fails the Bicep build instead of blanking a live app setting. The script also refuses a value with whitespace or a literal backslash-n. `export X="$(…)"` and `echo` without `-n` leave those behind, and the app settings take them verbatim.
 
-The two header values are not exported and are not deployment parameters. They live in the Key Vault
-`demi-kv-<env>` (`demi-kv-test` in `c4b0a8-test-rg`, `demi-kv-prod` in `rg-demi-prod`), which
-eagle-demi owns, under the names `analytics-shared-header` and `analytics-audit-header`. Someone sets
-each value once by hand from the environment's devbox, which is the only place that can reach the
-vault:
+Read `FRONT_DOOR_ID` from the environment's Front Door profile. Keep it out of the repo: it decides whether `X-Azure-SocketIP` is trusted, so a caller who knows it can choose its own client address.
+
+```
+az afd profile show -g c4b0a8-test-rg -n eagle-edge-test --query frontDoorId -o tsv
+az afd profile show -g rg-eagle-public-prod -n eagle-edge-prod --query frontDoorId -o tsv
+```
+
+The two header values are not exported and are not deployment parameters. They live in the Key Vault `demi-kv-<env>` (`demi-kv-test` in `c4b0a8-test-rg`, `demi-kv-prod` in `rg-demi-prod`), which eagle-demi owns, under the names `analytics-shared-header` and `analytics-audit-header`. Set each value once by hand from the environment's devbox, the only place that reaches the vault:
 
 ```
 az keyvault secret set --vault-name demi-kv-<env> --name analytics-shared-header  --value '<value>'
 az keyvault secret set --vault-name demi-kv-<env> --name analytics-audit-header   --value '<value>'
 ```
 
-The deploy grants the analytics identity Key Vault Secrets User on that vault and writes the app
-settings as versionless `@Microsoft.KeyVault(SecretUri=…)` references, so no value passes through
-Bicep, a param file or a deployment record. The vault has public network access disabled, and App
-Service resolves a reference over the app's own outbound path rather than as a trusted service, so
-the Function App integrates with `snet-demi-func-fc1-<env>` — the landing-zone subnet delegated to
-`Microsoft.App/environments` that `demi-api-fc-<env>` already uses. `vnetSubnetId` in the param files
-names it, and has no default: without it both header settings resolve to nothing and every guarded
-route answers 401. The same two values back the `analytics-shared-header` and
-`analytics-audit-header` named values on `demi-apim-<env>`; both sides must read the same value or
-APIM's forwarded requests are refused. Rotating means setting a new version in the vault, then
-stopping and starting the Function App — a reference is cached for up to 24 hours, and Flex
-Consumption does not pick up a new version on restart alone.
+Set both before the first infra deploy. A reference the app cannot read reaches it as literal text, and the API then refuses to start.
 
-The operator also needs read on `demi-audit-<env>`, whose customer id the template reads at deploy
-time, and which in production lives in `rg-demi-prod`. Log Analytics Reader for the analytics identity
-on that workspace is the one grant made by hand, because a resource-group deployment cannot assign a
-role outside its own group.
+The deploy grants the analytics identity Key Vault Secrets User on that vault. It writes the app settings as versionless `@Microsoft.KeyVault(SecretUri=…)` references, so no value passes through Bicep, a param file or a deployment record. The grant can take up to 10 minutes to apply, so on a first deploy stop and start the Function App if the API refuses to start.
+
+The vault has public network access disabled, and App Service resolves a reference over the app's own outbound path. So the Function App integrates with `snet-demi-func-fc1-<env>`, the `Microsoft.App/environments`-delegated subnet that `demi-api-fc-<env>` already uses. `vnetSubnetId` in the param files names it. It has no default, because without it both header settings resolve to nothing and every guarded route answers 401.
+
+The same two values back the `analytics-shared-header` and `analytics-audit-header` named values on `demi-apim-<env>`. Both sides must read the same value, or APIM's forwarded requests are refused.
+
+To rotate, set a new version in the vault, then stop and start the Function App. A reference is cached for up to 24 hours, and Flex Consumption does not pick up a new version on restart alone.
+
+The operator also needs read on `demi-audit-<env>`, whose customer id the template reads at deploy time. In production that workspace lives in `rg-demi-prod`, and a resource-group deployment cannot assign a role outside its own group. Grant Log Analytics Reader on it to the analytics identity by hand, once:
+
+```
+az role assignment create --role "Log Analytics Reader" \
+  --assignee-object-id "$(az identity show -g rg-eagle-public-prod -n analytics-identity-prod --query principalId -o tsv)" \
+  --assignee-principal-type ServicePrincipal \
+  --scope "$(az monitor log-analytics workspace show -g rg-demi-prod -n demi-audit-prod --query id -o tsv)"
+```
+
+Until then the audit viewer's union over the pre-cutover `DemiAudit_CL` rows returns 403.
 
 ### The application
 
-CI authenticates as the user-assigned managed identity `analytics-cicd-<env>` through a federated
-credential, with no client secret anywhere.
+CI authenticates as the user-assigned managed identity `analytics-cicd-<env>` through a federated credential, with no client secret anywhere.
 
 | | |
 |---|---|
@@ -188,20 +185,16 @@ credential, with no client secret anywhere.
 | RBAC | Website Contributor on `analytics-api-fc-<env>` **individually**, plus Storage Blob Data Contributor and Storage Account Contributor on the Function's storage account. Nothing at resource-group scope |
 | Config | Secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `MAXMIND_LICENSE_KEY`; variables `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, `AZURE_STORAGE_ACCOUNT`. All on the GitHub environment, nothing at repository scope |
 
-The template cannot make those assignments — it does not know the CI identity — so they are granted
-by hand after the first `./scripts/deploy-infra.sh <env> --live`, once the app and the account exist.
+The template does not know the CI identity, so it cannot make those assignments. Grant them by hand after the first `./scripts/deploy-infra.sh <env> --live`, once the app and the account exist.
 
-Declaring `environment:` in a workflow changes the OIDC subject claim to
-`repo:digitalspace/eagle-analytics:environment:<env>`, and the subject is the whole contract: rename
-the environment and Azure Login fails with `AADSTS700213`. Create the credential for the new subject
-before renaming, prove a deploy green, and only then remove the old one.
+A Bicep-only change triggers no app deploy. Publish the first build by hand; every later push to `main` that touches the application publishes onto the settings the infra deploy wrote:
 
-`.github/workflows/refresh-geoip.yaml` authenticates as the same identity and uploads to the `geoip`
-container on that same storage account, so those two storage roles cover it as well. It needs
-`MAXMIND_LICENSE_KEY` and `AZURE_STORAGE_ACCOUNT` on the environment: the account is named rather
-than looked up by resource group, because the identity holds nothing at that scope and the name
-carries a uniqueString suffix.
+```
+gh workflow run azure-deploy-staging-api.yaml -R digitalspace/eagle-analytics --ref main
+```
 
-The template grants the DEMI identity two things on this estate: publish on the analytics DCR, so
-eagle-demi writes audit rows into the same pipeline, and Log Analytics Reader on
-`analytics-logs-<env>`, so its `GET /admin/audit` can read the half of the union that lives here.
+Declaring `environment:` in a workflow changes the OIDC subject claim to `repo:digitalspace/eagle-analytics:environment:<env>`. The subject is the whole contract: rename the environment and Azure Login fails with `AADSTS700213`. Create the credential for the new subject before renaming, prove a deploy green, and only then remove the old one.
+
+`.github/workflows/refresh-geoip.yaml` authenticates as the same identity and uploads to the `geoip` container on that storage account, so the same two storage roles cover it. It needs `MAXMIND_LICENSE_KEY` and `AZURE_STORAGE_ACCOUNT` on the environment. The account is named rather than looked up by resource group, because the identity holds nothing at that scope and the name carries a uniqueString suffix.
+
+The template grants the DEMI identity two things on this estate. One is publish on the analytics DCR, so eagle-demi writes audit rows into the same pipeline. The other is Log Analytics Reader on `analytics-logs-<env>`, so its `GET /admin/audit` can read the half of the union that lives here.

@@ -120,9 +120,8 @@ test('a failed query is logged by its summary, never by its text', async (t) => 
   assert.doesNotMatch(lines.join(' '), /EagleEvents_CL/);
 });
 
-// The SDK message for a refused query is only 'Unexpected status code: 400'; the reason lives in the
-// response body's error chain, and either casing of innererror shows up across Azure services. Those
-// inner messages quote table names and workspace GUIDs, so only the codes may reach the log.
+// The reason for a 400 lives in the body's error chain (innererror in either casing), and its messages
+// quote table names and workspace GUIDs, so only the codes may reach the log.
 test('a refused query is logged with its status and inner error chain', async (t) => {
   runner._setRunner(async () => {
     throw Object.assign(new Error('Unexpected status code: 400'), {

@@ -1,13 +1,6 @@
 #!/usr/bin/env python3
-"""
-Zip the Function app for a Flex Consumption publish: index.js, host.json, package.json, src/ and the
-installed dependencies.
-
-Flex does no remote build, so node_modules travels in the package. Run `yarn workspaces focus
---production` first: the extract phase is paid per file and dev dependencies are most of them.
-
-    scripts/package-api.py [repo_root] [zip_path]
-"""
+"""Zip the Function app for Flex Consumption, which does no remote build, so node_modules ships too.
+Run `yarn workspaces focus --production` first: extract is paid per file, and dev deps are most of them."""
 import os
 import sys
 import zipfile
@@ -27,8 +20,7 @@ ROOT_EXCLUDE_DIRS = {
 # real repository, and directory pruning does not see it.
 ROOT_EXCLUDE_FILES = {".git", ".gitignore", ".yarnrc.yml", "eslint.config.js", "yarn.lock"}
 
-# Operator files that must never reach the app. A packaged `.env` once carried live credentials into
-# a readable path in another EPIC repository.
+# Operator files that can hold credentials; they must never reach the app.
 EXCLUDED_NAMES = {"local.settings.json", ".npmrc"}
 EXCLUDED_PREFIXES = ("LICENSE", "CHANGELOG")
 
@@ -72,9 +64,8 @@ def package_api(repo_root, zip_path):
                 archive.write(full_path, os.path.relpath(full_path, repo_root))
                 count += 1
 
-        # The deploy id goes IN the package: an app setting cannot do this job, because the old
-        # worker serves for about two minutes and would report the new value. 0644 or the worker
-        # cannot read it.
+        # Deploy id ships in the package, not an app setting: the old worker serves ~2 more minutes
+        # and would report the new value. 0644 or the worker cannot read it.
         stamp = zipfile.ZipInfo("build-id.txt")
         stamp.external_attr = 0o100644 << 16  # S_IFREG | 0644
         archive.writestr(stamp, os.environ.get("BUILD_ID", "unknown"))

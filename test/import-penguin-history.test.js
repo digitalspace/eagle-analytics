@@ -104,9 +104,8 @@ test('an event type nobody mapped keeps the name its dashboards already use', ()
   assert.deepStrictEqual(names, ['Document Downloaded', 'Page Viewed']);
 });
 
-// penguin took the event name from the browser and never validated it, so its history holds scanner
-// payloads as event names. This script posts to the DCR and never passes POST /events, so the
-// allow-list here is the only thing between those strings and a chart's group-by.
+// penguin history holds scanner payloads as event names, and the import skips POST /events, so the
+// allow-list is the only thing between those strings and a chart's group-by.
 const summary = (eventType) =>
   'day,source_app,event_type,event_count,unique_sessions,unique_users\n' +
   `2026-08-01 00:00:00+00,eagle-public,${eventType},7,3,0\n`;
@@ -184,9 +183,8 @@ test('a header with no rows under it is refused', () => {
   assert.throws(() => toDailyRows(csv, OPTIONS), /no rows/);
 });
 
-// The prod page_views export is 330,918 rows. Anything that hands one argument per row to a function
-// — `push(...rows)` — dies with "Maximum call stack size exceeded" at that size and at no other, so
-// the size is the test.
+// The prod page_views export is 330,918 rows; `push(...rows)` overflows the call stack only at that
+// kind of size, so the size is the test.
 const HUGE = 200000;
 
 /** A page_views export of `count` rows, on disk, because the CLI reads a file. */

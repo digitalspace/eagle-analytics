@@ -1,12 +1,7 @@
 'use strict';
 
-/**
- * Load a module with src/config.js read against a given environment.
- *
- * config.js reads process.env once, at load, so a case that needs different settings has to load it
- * again. Only config and the named module are evicted: the logger holds a reference to the config it
- * loaded with, and no case here touches the logger.
- */
+// config.js reads process.env once at load, so only config and the named module are reloaded; the
+// logger keeps the config it first loaded with, and no case here touches it.
 
 /** What a deployed instance always has. A case names only the settings it is actually about. */
 const DEPLOYED = Object.freeze({
@@ -16,10 +11,7 @@ const DEPLOYED = Object.freeze({
   ANALYTICS_WORKSPACE_CUSTOMER_ID: 'e1d4a0b2-test-workspace'
 });
 
-/**
- * @param {string} name a module under src/, e.g. `auth/apim-header` or `config`.
- * @param {object} env settings to apply; `undefined` unsets one.
- */
+/** Loads src/<name> (e.g. `auth/apim-header`) under `env`; an `undefined` value unsets that setting. */
 function loadModule(name, env = {}) {
   const settings = { ...DEPLOYED, ...env };
   const names = Object.keys(settings);

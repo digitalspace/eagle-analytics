@@ -32,9 +32,8 @@ const ORIGIN = { origin: 'https://eagle-public-test.example.invalid' };
 // entry; everything to its left is what the caller sent.
 const CLIENT = { 'x-forwarded-for': '10.0.0.5, 24.108.0.1' };
 
-// What the real chain puts on a request: the cluster's egress address in X-Client-Ip, stamped by
-// demi-apim-<env>, and APIM's own outbound hop appended after the visitor's by the Functions front
-// end. A browser is the hop before that one; a server producer has no hop of its own.
+// The real chain: demi-apim-<env> stamps the cluster egress in X-Client-Ip, the front end appends
+// APIM's outbound hop. A browser is the hop before it; a server producer has none.
 const CLUSTER = '142.34.194.121';
 const APIM_HOP = '20.104.10.20';
 
@@ -47,10 +46,7 @@ const throughCluster = (visitor) => ({
 // with every other, so without this the cap one case fills is charged to the next.
 beforeEach(() => ipCap._reset());
 
-/**
- * The shape the Functions host hands the dispatcher. Content-Length is filled in the way the gateway
- * fills it; `declareLength: false` is the request that arrives without one.
- */
+/** The request the Functions host hands the dispatcher; `declareLength: false` omits Content-Length. */
 function request(method, path, { headers = {}, body, declareLength = true } = {}) {
   const payload = body === undefined ? '' : JSON.stringify(body);
   const all = {
@@ -74,10 +70,7 @@ async function call(method, path, options) {
   };
 }
 
-/**
- * Collect what the writer actually sends. The transport is the seam the writer already has, so these
- * cases go through the real enqueue and batching rather than a stand-in for them.
- */
+/** Captures rows at the writer's transport seam, so the real enqueue and batching run. */
 function recordRows(t) {
   const sent = [];
   writer._setTransport(async (stream, rows) => { sent.push(...rows.map((row) => ({ stream, row }))); });
@@ -323,7 +316,7 @@ test('a batch past the per-address cap is refused with a Retry-After', async (t)
 });
 
 // eagle-api reaches APIM from the cluster's egress pool, which every browser behind the same cluster
-// also comes out of. Capping that one address refused eagle-api's batches on prod.
+// also comes out of. Capping that one address would refuse eagle-api's batches.
 test('a server producer behind the cluster is not capped by address', async (t) => {
   recordRows(t);
   geo._setReader(null);
@@ -386,7 +379,6 @@ test('a browser behind the cluster is still capped at its own address', async (t
   );
 });
 
-// Every event geolocated to APIM's Toronto address before the visitor hop was read.
 test('a browser behind the cluster is located by its own address, not the gateway hop', async (t) => {
   const sent = recordRows(t);
   geo._setReader({

@@ -26,9 +26,8 @@ test('trailing whitespace does not match', () => {
   assert.strictEqual(safeEqual(`${EXPECTED} `, EXPECTED), false);
 });
 
-// Both sides are hashed before the comparison because crypto.timingSafeEqual throws on buffers of
-// unequal length, and that throw is itself a length oracle: it tells a caller how long the real
-// credential is. Two lengths, either side of the expected one.
+// Both sides are hashed first: timingSafeEqual throws on unequal lengths, and that throw is a length
+// oracle for the real credential. Two lengths, either side of the expected one.
 for (const [label, presented] of [
   ['a shorter value', EXPECTED.slice(0, 4)],
   ['a longer value', `${EXPECTED}-and-then-some-more`],

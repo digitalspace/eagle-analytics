@@ -36,14 +36,12 @@ test('a request with no Origin header is a server-side producer and passes', () 
   assert.doesNotThrow(() => guard(request({})));
 });
 
-// An Origin present but empty is not a browser-sent Origin; it reads as absent, same as above.
 test('an empty Origin header is treated as absent', () => {
   const guard = guardFor(ALLOWED);
   assert.doesNotThrow(() => guard(request({ origin: '' })));
 });
 
-// The three ways a near-match is still a different origin. The comparison is exact: the header a
-// browser sends is already the serialised origin, so anything else came from somewhere else.
+// Exact match: a browser sends the serialised origin, so a near-match came from somewhere else.
 for (const [label, origin] of [
   ['cased differently', 'https://EAGLE-PUBLIC-TEST.example.invalid'],
   ['carrying a trailing slash', `${ALLOWED}/`],
@@ -55,8 +53,6 @@ for (const [label, origin] of [
   });
 }
 
-// The scheme and port are part of the origin: http and https on one host are two entries, and so are
-// two ports.
 test('the same host on another scheme is refused', () => {
   const guard = guardFor(ALLOWED);
   assert.throws(() => guard(request({ origin: ALLOWED.replace('https:', 'http:') })), FORBIDDEN);

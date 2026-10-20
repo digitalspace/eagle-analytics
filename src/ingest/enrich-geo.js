@@ -1,17 +1,7 @@
 'use strict';
 
-/**
- * Coarse location from the caller's address, using the MaxMind GeoLite2 city database.
- *
- * THE ADDRESS ITSELF NEVER LEAVES THIS MODULE. It is not returned, not written to a row and not
- * logged, at any level. Country, region and city are the only things that come out, which is the
- * whole reason the lookup happens server-side instead of the client reporting its own location.
- *
- * The database is a 60 MB blob, not a dependency: it is refreshed monthly by its own workflow, and a
- * Flex Consumption instance fetches it once on the first request it serves. If it cannot be fetched
- * the module says so once and every lookup after that is a no-op — an unenriched row is worth
- * keeping, and a failing enrichment must never cost an event.
- */
+// The address is never written to a row or logged; only country, region and city come out. A missing
+// GeoLite2 database is logged once and lookups become no-ops: enrichment must never cost an event.
 
 const fs = require('fs');
 const os = require('os');
@@ -43,9 +33,8 @@ const IPV4_PRIVATE = [
 ];
 
 /**
- * Strip what a proxy adds around an address: brackets, and the source port Front Door appends to an
- * IPv4 hop. A bare IPv6 address has several colons, so a port can only be recognised on the
- * bracketed form or on IPv4.
+ * Strip brackets and the source port Front Door appends to an IPv4 hop. Bare IPv6 has many colons,
+ * so a port is only recognised on the bracketed form or on IPv4.
  */
 function normalizeIp(value) {
   const raw = typeof value === 'string' ? value.trim() : '';
@@ -82,29 +71,19 @@ function isTrustedProxy(ip) {
 }
 
 /**
- * Who called, as far as it can be trusted.
- *
- * A browser event arrives through
- * `browser -> OpenShift router -> rproxy -> demi-apim-<env> -> Functions front end -> here`. The
- * router appends the visitor to X-Forwarded-For; APIM appends nothing to it and instead stamps the
- * address IT saw in X-Client-Ip, and the Functions front end then appends APIM's own outbound address.
- * So the header reads `[…what the caller sent…, visitor, apim]` — hop -1 is Azure's, hop -2 is the
- * visitor, and everything further left is caller-written and worth nothing.
- *
- * X-Client-Ip is only trustworthy because every route reaching here also carries `apimGuard`
- * (src/auth/apim-header.js): APIM sets it with `override`, and a request that skipped the gateway is a
- * 401 before a controller runs. X-Azure-ClientIP stays unread: Front Door derives it from the caller's
- * own X-Forwarded-For. Same trust rule as eagle-api's rateLimitKey helper.
- *
- * @returns {{ip: string, trusted: boolean}} `trusted` marks one of our own server producers, which
- * shares the cluster's egress address with every browser behind it and so cannot be capped by address.
+ * Who called, as far as it can be trusted. `trusted` marks our own server producer, which shares the
+ * cluster egress address with every browser behind it, so it cannot be capped by address.
+ * @returns {{ip: string, trusted: boolean}}
  */
 function resolveCaller(req) {
+  // X-Azure-ClientIP stays unread: Front Door derives it from the caller's own X-Forwarded-For.
   if (config.frontDoorId && safeEqual(req.header('x-azure-fdid'), config.frontDoorId)) {
     const socketIp = normalizeIp(req.header('x-azure-socketip'));
     if (socketIp) return { ip: socketIp, trusted: false };
   }
 
+  // XFF ends `…caller-written, visitor, apim`. X-Client-Ip is trusted only because APIM sets it with
+  // override and apimGuard (src/auth/apim-header.js) 401s any request that skipped APIM.
   const hops = String(req.header('x-forwarded-for') || '').split(',').map(normalizeIp).filter(Boolean);
   const gatewaySaw = normalizeIp(req.header('x-client-ip'));
 
@@ -178,10 +157,7 @@ function ensureReader() {
   return loading;
 }
 
-/**
- * @returns {Promise<{Country?: string, Region?: string, City?: string}>} empty for a private address,
- * an unavailable database or an address the database does not know.
- */
+/** @returns {Promise<{Country?: string, Region?: string, City?: string}>} empty when not found. */
 async function geoFields(ip) {
   if (!ip || isPrivateIp(ip)) return {};
 
@@ -213,7 +189,7 @@ module.exports = {
   resolveCaller,
   geoFields,
   isPrivateIp,
-  // Test seam. One reader, one real implementation, so no abstraction over it.
+  // Test seams.
   _setReader: (fake) => { reader = fake; unavailable = fake === null; },
   _reset: () => { reader = null; loading = null; unavailable = false; }
 };

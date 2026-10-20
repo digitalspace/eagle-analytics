@@ -1,11 +1,7 @@
 'use strict';
 
-/**
- * A local Keycloak: one RSA key pair, the JWKS that publishes it, and a signer.
- *
- * Shared by test/keycloak.test.js and test/query-controller.test.js so the controller suite
- * exercises the real verification path rather than a stubbed identity.
- */
+// A local Keycloak (key pair, JWKS, signer), so the controller suites exercise the real
+// verification path rather than a stubbed identity.
 
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
