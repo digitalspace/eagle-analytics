@@ -9,9 +9,6 @@ const { logger } = require('../utils/logger');
 const EVENTS_STREAM = 'Custom-EagleEvents_CL';
 const AUDIT_STREAM = 'Custom-EagleAudit_CL';
 
-// Not buffered: the summary rule fills it, and only scripts/import-penguin-history.js posts to it.
-const DAILY_STREAM = 'Custom-EagleEventsDaily_CL';
-
 // One buffer per stream: the ingestion API takes one stream per call.
 const buffers = new Map([
   [EVENTS_STREAM, []],
@@ -189,7 +186,6 @@ module.exports = {
   describeUploadError,
   EVENTS_STREAM,
   AUDIT_STREAM,
-  DAILY_STREAM,
   // Test seams only.
   _setTransport: (send) => { sendBatch = send; },
   _resetTransport: () => { sendBatch = uploadToDcr; client = null; },
