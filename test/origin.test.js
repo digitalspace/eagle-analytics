@@ -86,8 +86,7 @@ test('an empty allow-list still passes a producer that sends no Origin', () => {
   assert.doesNotThrow(() => guard(request({})));
 });
 
-// Local development runs with no gateway header value, which switches every guard off; the same
-// setting must not switch the Origin check off in a deployed environment.
+// Local development runs with no gateway header value, which switches every guard off.
 test('with the guards disabled locally any origin passes', () => {
   const guard = loadGuard({
     ENVIRONMENT: 'dev',
@@ -95,9 +94,4 @@ test('with the guards disabled locally any origin passes', () => {
     ALLOWED_ORIGINS: ALLOWED
   });
   assert.doesNotThrow(() => guard(request({ origin: 'https://not-ours.example.invalid' })));
-});
-
-test('a deployed environment enforces the check even with an origin nobody listed', () => {
-  const guard = loadGuard({ ENVIRONMENT: 'test', ALLOWED_ORIGINS: ALLOWED });
-  assert.throws(() => guard(request({ origin: 'https://not-ours.example.invalid' })), FORBIDDEN);
 });

@@ -198,16 +198,7 @@ function hugePageViewsCsv(count) {
   return file;
 }
 
-test('a 200,000-row export maps without overflowing the stack', (t) => {
-  const file = hugePageViewsCsv(HUGE);
-  t.after(() => fs.rmSync(path.dirname(file), { recursive: true, force: true }));
-
-  const { rows } = toDailyRows(fs.readFileSync(file, 'utf8'), OPTIONS);
-
-  assert.strictEqual(rows.length, HUGE);
-});
-
-test('a 200,000-row export survives the whole dry run, not just the mapping', async (t) => {
+test('a 200,000-row export survives the dry run without overflowing the stack', async (t) => {
   const file = hugePageViewsCsv(HUGE);
   t.after(() => fs.rmSync(path.dirname(file), { recursive: true, force: true }));
 

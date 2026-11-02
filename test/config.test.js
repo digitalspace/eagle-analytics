@@ -22,6 +22,19 @@ for (const setting of ['SESSION_EVENT_CAP', 'IP_EVENT_CAP', 'ANALYTICS_MAX_BATCH
   });
 }
 
+// Missing outside dev, the header values would serve ingest openly, and the client list or workspace
+// would show up as a dashboard that 401s or 503s and looks like a bug.
+for (const setting of [
+  'APIM_SHARED_HEADER_VALUE',
+  'AUDIT_SHARED_HEADER_VALUE',
+  'KEYCLOAK_ALLOWED_CLIENTS',
+  'ANALYTICS_WORKSPACE_CUSTOMER_ID'
+]) {
+  test(`a deployed environment refuses to load without ${setting}`, () => {
+    assert.throws(() => loadConfig({ ENVIRONMENT: 'test', [setting]: undefined }), new RegExp(`${setting} is required`));
+  });
+}
+
 test('a cap that is set is the one used', () => {
   assert.strictEqual(loadConfig({ ENVIRONMENT: 'test', SESSION_EVENT_CAP: '7' }).sessionEventCap, 7);
 });
