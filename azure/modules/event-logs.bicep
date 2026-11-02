@@ -179,7 +179,8 @@ resource dcr 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
       'Custom-${auditTableName}': {
         columns: auditColumns
       }
-      // Only for scripts/import-penguin-history.js; the summary rule writes the table without a stream.
+      // No writer in this repo: the summary rule writes the table without a stream.
+      // Kept until removing it ships as an infra change.
       'Custom-${dailyTableName}': {
         columns: dailyColumns
       }
