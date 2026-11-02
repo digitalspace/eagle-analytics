@@ -31,11 +31,11 @@ const run = (env) =>
   spawnSync('bash', [SCRIPT, 'test', '--what-if'], { env: { ...CLEAN, ...env }, encoding: 'utf8' });
 
 // Shapes a pasted value picks up in an operator's shell; bicep passes each to the deployment verbatim.
-// One per branch of the script's `case`, for each variable it loops over.
+// Between them: every variable the script loops over, each branch of its `case`, and newline and CR.
 const MANGLED = [
   ['FRONT_DOOR_ID', 'a literal backslash-n', `${SECRET}\\n`],
   ['FRONT_DOOR_ID', 'a trailing newline', `${SECRET}\n`],
-  ['BUDGET_CONTACT_EMAIL', 'a literal backslash-n', `${SECRET}\\n`],
+  ['BUDGET_CONTACT_EMAIL', 'a carriage return', `${SECRET}\r`],
   ['BUDGET_CONTACT_EMAIL', 'an inner space', `${SECRET} more`]
 ];
 

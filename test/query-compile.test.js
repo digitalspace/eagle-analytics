@@ -130,6 +130,7 @@ test('includeDemi unions the DEMI hourly rollup and labels its rows', () => {
   const text = kql({ measure: 'events', bin: 'day', groupBy: ['SourceApp'], includeDemi: true });
 
   assertLine(text, 'union');
+  assertLine(text, '  (EagleEventsDaily_CL | project Day, SourceApp, EventName, ProjectId, Events, Users),');
   assertLine(
     text,
     "  (workspace('7f2e9d8c-4444-4555-8666-bbbbbbbbbbbb').DemiEventsHourly_CL | extend SourceApp = @'eagle-demi'" +

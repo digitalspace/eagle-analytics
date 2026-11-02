@@ -42,6 +42,8 @@ function resolveParams(file, env) {
   return JSON.parse(JSON.parse(result.stdout).parametersJson).parameters;
 }
 
+const PARAM_ENV = { FRONT_DOOR_ID: 'placeholder', BUDGET_CONTACT_EMAIL: 'someone@example.invalid' };
+
 const template = compile('main.bicep');
 const noAzureCli = template ? false : 'Azure CLI not installed, so the template was never compiled';
 
@@ -57,19 +59,25 @@ const appSetting = (name) =>
 const literalText = (value) => value.match(/^\[format\('([^']*)'/)?.[1] ?? value;
 
 const HEADER_SECRETS = [
-  { header: 'gateway', setting: 'APIM_SHARED_HEADER_VALUE', uri: 'apimSharedHeaderSecretUri' },
-  { header: 'audit', setting: 'AUDIT_SHARED_HEADER_VALUE', uri: 'auditSharedHeaderSecretUri' }
+  { header: 'gateway', setting: 'APIM_SHARED_HEADER_VALUE', uri: 'apimSharedHeaderSecretUri', name: 'apimSharedHeaderSecretName' },
+  { header: 'audit', setting: 'AUDIT_SHARED_HEADER_VALUE', uri: 'auditSharedHeaderSecretUri', name: 'auditSharedHeaderSecretName' }
 ];
 
-for (const { header, setting, uri } of HEADER_SECRETS) {
-  test(`the ${header} header app setting is a Key Vault reference, not a value`, { skip: noAzureCli }, () => {
-    assert.match(literalText(appSetting(setting).value), /^@Microsoft\.KeyVault\(SecretUri=/);
+for (const { header, setting, uri, name } of HEADER_SECRETS) {
+  test(`the ${header} header app setting is a Key Vault reference to its own secret`, { skip: noAzureCli }, () => {
+    const value = appSetting(setting).value;
+
+    assert.match(literalText(value), /^@Microsoft\.KeyVault\(SecretUri=/);
+    assert.ok(value.includes(`parameters('${uri}')`), value);
   });
 
   // A URI with a version pinned would freeze the app on the value that was current at deploy time, so
   // rotating the secret in the vault would change nothing until the next deployment.
-  test(`the ${header} secret URI is versionless`, { skip: noAzureCli }, () => {
-    assert.match(literalText(template.variables[uri]), /\/secrets\/[^/]+$/);
+  test(`the ${header} secret URI is versionless and names its own secret`, { skip: noAzureCli }, () => {
+    const value = template.variables[uri];
+
+    assert.match(literalText(value), /\/secrets\/[^/]+$/);
+    assert.ok(value.includes(`variables('${name}')`), value);
   });
 }
 
@@ -166,8 +174,13 @@ test('the Function App waits on the vault grant', { skip: noAzureCli }, () => {
 // The prod vault is in rg-demi-prod while this template deploys to rg-eagle-public-prod; test's vault
 // is in the group being deployed to, so only prod moves the grant.
 test('prod names the vault\'s resource group, test keeps the deployment\'s own', { skip: noAzureCli }, () => {
-  const env = { FRONT_DOOR_ID: 'placeholder', BUDGET_CONTACT_EMAIL: 'someone@example.invalid' };
-
-  assert.ok('keyVaultResourceGroup' in resolveParams('main.prod.bicepparam', env), 'prod leaves the grant in its own group');
-  assert.ok(!('keyVaultResourceGroup' in resolveParams('main.test.bicepparam', env)), 'test pins a resource group it does not need');
+  assert.strictEqual(resolveParams('main.prod.bicepparam', PARAM_ENV).keyVaultResourceGroup?.value, 'rg-demi-prod');
+  assert.ok(!('keyVaultResourceGroup' in resolveParams('main.test.bicepparam', PARAM_ENV)), 'test pins a resource group it does not need');
 });
+
+// The other environment's vault would deploy cleanly and leave both header settings unresolved.
+for (const environment of ['test', 'prod']) {
+  test(`${environment} reads its own environment's vault`, { skip: noAzureCli }, () => {
+    assert.strictEqual(resolveParams(`main.${environment}.bicepparam`, PARAM_ENV).keyVaultName.value, `demi-kv-${environment}`);
+  });
+}
