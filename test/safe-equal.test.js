@@ -43,3 +43,9 @@ test('a Buffer holding the right string does not match', () => {
 test('an empty header does not match an empty expectation', () => {
   assert.strictEqual(answerOf('', ''), false);
 });
+
+// The guard in src/auth/safe-equal.js answers false for a non-string expectation instead of
+// throwing; a throw out of a guard is a 500 where a 401 belongs.
+test('an undefined expectation matches nothing and does not throw', () => {
+  assert.strictEqual(answerOf(EXPECTED, undefined), false);
+});
