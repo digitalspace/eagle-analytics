@@ -178,7 +178,7 @@ test('prod names the vault\'s resource group, test keeps the deployment\'s own',
   assert.ok(!('keyVaultResourceGroup' in resolveParams('main.test.bicepparam', PARAM_ENV)), 'test pins a resource group it does not need');
 });
 
-// The other environment's vault would deploy cleanly and leave both header settings unresolved.
+// The other environment's vault fails the deploy at the vault grant; catch it before a deploy.
 for (const environment of ['test', 'prod']) {
   test(`${environment} reads its own environment's vault`, { skip: noAzureCli }, () => {
     assert.strictEqual(resolveParams(`main.${environment}.bicepparam`, PARAM_ENV).keyVaultName.value, `demi-kv-${environment}`);
