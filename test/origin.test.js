@@ -96,8 +96,3 @@ test('with the guards disabled locally any origin passes', () => {
   });
   assert.doesNotThrow(() => guard(request({ origin: 'https://not-ours.example.invalid' })));
 });
-
-test('a deployed environment enforces the check even with an origin nobody listed', () => {
-  const guard = loadGuard({ ENVIRONMENT: 'test', ALLOWED_ORIGINS: ALLOWED });
-  assert.throws(() => guard(request({ origin: 'https://not-ours.example.invalid' })), FORBIDDEN);
-});

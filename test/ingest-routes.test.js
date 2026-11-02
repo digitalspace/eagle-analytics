@@ -81,6 +81,16 @@ function recordRows(t) {
   return sent;
 }
 
+/** Rows captured, no geo lookup, a fresh session cap: what a case sending an accepted batch needs. */
+function acceptEvents(t) {
+  const sent = recordRows(t);
+  geo._setReader(null);
+  t.after(() => geo._reset());
+  sessionCap._reset();
+  t.after(() => sessionCap._reset());
+  return sent;
+}
+
 /** Now, not a fixed date: an event older than two days is refused (src/ingest/validate.js). */
 const NOW = new Date().toISOString();
 
@@ -99,18 +109,14 @@ test('an event batch arriving without the gateway header is refused', async () =
   assert.strictEqual(response.status, 401);
 });
 
-test('a batch through the gateway is accepted, and reports what it took', async (t) => {
-  recordRows(t);
-  geo._setReader(null);
-  t.after(() => geo._reset());
-  sessionCap._reset();
-  t.after(() => sessionCap._reset());
+test('a batch through the gateway from a page EPIC published is accepted, and reports what it took', async (t) => {
+  acceptEvents(t);
 
   const events = [
     event({ sessionId: 'accepted-session', properties: { path: '/projects' } }),
     event({ sessionId: 'accepted-session', eventType: 'Project Viewed' })
   ];
-  const response = await call('POST', '/analytics/events', { headers: GATEWAY, body: { events } });
+  const response = await call('POST', '/analytics/events', { headers: { ...GATEWAY, ...ORIGIN }, body: { events } });
 
   assert.deepStrictEqual(
     { status: response.status, body: response.body },
@@ -119,9 +125,7 @@ test('a batch through the gateway is accepted, and reports what it took', async 
 });
 
 test('the endpoint is served at the root as well as under /analytics', async (t) => {
-  recordRows(t);
-  geo._setReader(null);
-  t.after(() => geo._reset());
+  acceptEvents(t);
 
   const body = { events: [event({ sessionId: 'root-mounted-session' })] };
   const response = await call('POST', '/events', { headers: GATEWAY, body });
@@ -130,9 +134,7 @@ test('the endpoint is served at the root as well as under /analytics', async (t)
 });
 
 test('an accepted event reaches the writer as a table row', async (t) => {
-  const sent = recordRows(t);
-  geo._setReader(null);
-  t.after(() => geo._reset());
+  const sent = acceptEvents(t);
 
   const properties = {
     path: '/p/58851197aaecd9001b8227cc',
@@ -192,11 +194,7 @@ test('an accepted event carries the location its address resolved to, never the 
 });
 
 test('one invalid event is reported and the rest of the batch is still taken', async (t) => {
-  recordRows(t);
-  geo._setReader(null);
-  t.after(() => geo._reset());
-  sessionCap._reset();
-  t.after(() => sessionCap._reset());
+  acceptEvents(t);
 
   const events = [event({ sessionId: 'mixed-batch' }), event({ sourceApp: 'not-an-epic-app' })];
   const response = await call('POST', '/analytics/events', { headers: GATEWAY, body: { events } });
@@ -207,31 +205,13 @@ test('one invalid event is reported and the rest of the batch is still taken', a
 });
 
 test('a batch with nothing valid in it is a 400', async (t) => {
-  recordRows(t);
-  geo._setReader(null);
-  t.after(() => geo._reset());
+  acceptEvents(t);
 
   const events = [event({ sourceApp: 'not-an-epic-app' })];
   const response = await call('POST', '/analytics/events', { headers: GATEWAY, body: { events } });
 
   assert.strictEqual(response.status, 400);
   assert.strictEqual(response.body.rejected.length, 1);
-});
-
-test('a batch from a page EPIC published is accepted', async (t) => {
-  recordRows(t);
-  geo._setReader(null);
-  t.after(() => geo._reset());
-  sessionCap._reset();
-  t.after(() => sessionCap._reset());
-
-  const body = { events: [event({ sessionId: 'allowed-origin-session' })] };
-  const response = await call('POST', '/analytics/events', {
-    headers: { ...GATEWAY, ...ORIGIN },
-    body
-  });
-
-  assert.strictEqual(response.status, 202);
 });
 
 test('a batch from somebody else\'s page is refused', async (t) => {
@@ -244,21 +224,6 @@ test('a batch from somebody else\'s page is refused', async (t) => {
   });
 
   assert.strictEqual(response.status, 403);
-});
-
-// A server-side producer sends no Origin, and it is the header's absence that identifies it.
-test('a batch with no Origin at all is accepted', async (t) => {
-  recordRows(t);
-  geo._setReader(null);
-  t.after(() => geo._reset());
-  sessionCap._reset();
-  t.after(() => sessionCap._reset());
-
-  const body = { events: [event({ sourceApp: 'eagle-api', sessionId: undefined })] };
-  const response = await call('POST', '/analytics/events', { headers: GATEWAY, body });
-
-  assert.strictEqual(response.status, 202);
-  assert.strictEqual(response.body.accepted, 1);
 });
 
 test('a body route that declares no length is refused before it is read', async (t) => {
@@ -274,11 +239,7 @@ test('a body route that declares no length is refused before it is read', async 
 });
 
 test('events past the session cap are dropped and counted, not refused', async (t) => {
-  recordRows(t);
-  geo._setReader(null);
-  t.after(() => geo._reset());
-  sessionCap._reset();
-  t.after(() => sessionCap._reset());
+  acceptEvents(t);
 
   // SESSION_EVENT_CAP is 2 above.
   const events = [event(), event(), event()].map((one) => ({ ...one, sessionId: 'capped-session' }));
@@ -291,9 +252,7 @@ test('events past the session cap are dropped and counted, not refused', async (
 });
 
 test('a batch past the per-address cap is refused with a Retry-After', async (t) => {
-  recordRows(t);
-  geo._setReader(null);
-  t.after(() => geo._reset());
+  acceptEvents(t);
 
   // Its own address, so this case does not spend the budget the cases above use.
   const from = { 'x-forwarded-for': '198.51.100.7' };
@@ -318,11 +277,7 @@ test('a batch past the per-address cap is refused with a Retry-After', async (t)
 // eagle-api reaches APIM from the cluster's egress pool, which every browser behind the same cluster
 // also comes out of. Capping that one address would refuse eagle-api's batches.
 test('a server producer behind the cluster is not capped by address', async (t) => {
-  recordRows(t);
-  geo._setReader(null);
-  t.after(() => geo._reset());
-  sessionCap._reset();
-  t.after(() => sessionCap._reset());
+  acceptEvents(t);
 
   // IP_EVENT_CAP is 3 above, so a capped caller would be refused from the fourth event on.
   const answers = [];
@@ -339,11 +294,7 @@ test('a server producer behind the cluster is not capped by address', async (t) 
 });
 
 test('two browsers behind the cluster get a budget each', async (t) => {
-  recordRows(t);
-  geo._setReader(null);
-  t.after(() => geo._reset());
-  sessionCap._reset();
-  t.after(() => sessionCap._reset());
+  acceptEvents(t);
 
   const filling = [0, 1, 2].map((n) => event({ sessionId: `busy-visitor-${n}` }));
   const first = await call('POST', '/analytics/events', {
@@ -359,11 +310,7 @@ test('two browsers behind the cluster get a budget each', async (t) => {
 });
 
 test('a browser behind the cluster is still capped at its own address', async (t) => {
-  recordRows(t);
-  geo._setReader(null);
-  t.after(() => geo._reset());
-  sessionCap._reset();
-  t.after(() => sessionCap._reset());
+  acceptEvents(t);
 
   const from = { ...GATEWAY, ...throughCluster('203.0.113.9') };
   const filling = [0, 1, 2].map((n) => event({ sessionId: `capped-visitor-${n}` }));

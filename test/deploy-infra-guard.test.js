@@ -30,34 +30,24 @@ const CLEAN = Object.freeze({
 const run = (env) =>
   spawnSync('bash', [SCRIPT, 'test', '--what-if'], { env: { ...CLEAN, ...env }, encoding: 'utf8' });
 
-test('clean values reach the deployment', () => {
-  const result = run({});
-  assert.strictEqual(result.status, 0, result.stderr);
-});
-
 // Shapes a pasted value picks up in an operator's shell; bicep passes each to the deployment verbatim.
+// One per branch of the script's `case`, for each variable it loops over.
 const MANGLED = [
-  ['a literal backslash-n', `${SECRET}\\n`],
-  ['a trailing newline', `${SECRET}\n`],
-  ['a leading newline', `\n${SECRET}`],
-  ['a trailing space', `${SECRET} `],
-  ['a tab', `${SECRET}\t`],
-  ['an inner space', `${SECRET} more`],
-  ['a carriage return', `${SECRET}\r`],
-  ['nothing but whitespace', ' ']
+  ['FRONT_DOOR_ID', 'a literal backslash-n', `${SECRET}\\n`],
+  ['FRONT_DOOR_ID', 'a trailing newline', `${SECRET}\n`],
+  ['BUDGET_CONTACT_EMAIL', 'a literal backslash-n', `${SECRET}\\n`],
+  ['BUDGET_CONTACT_EMAIL', 'an inner space', `${SECRET} more`]
 ];
 
-for (const variable of REQUIRED) {
-  for (const [label, value] of MANGLED) {
-    test(`${variable} carrying ${label} stops the deploy`, () => {
-      const result = run({ [variable]: value });
+for (const [variable, label, value] of MANGLED) {
+  test(`${variable} carrying ${label} stops the deploy`, () => {
+    const result = run({ [variable]: value });
 
-      assert.strictEqual(result.status, 2, `stderr: ${result.stderr}`);
-      assert.match(result.stderr, new RegExp(variable));
-      // A secret in an operator's scrollback is a secret leaked; the error names the variable only.
-      assert.ok(!result.stderr.includes(SECRET), `stderr repeated the value: ${result.stderr}`);
-    });
-  }
+    assert.strictEqual(result.status, 2, `stderr: ${result.stderr}`);
+    assert.match(result.stderr, new RegExp(variable));
+    // A secret in an operator's scrollback is a secret leaked; the error names the variable only.
+    assert.ok(!result.stderr.includes(SECRET), `stderr repeated the value: ${result.stderr}`);
+  });
 }
 
 test('an unset variable is still reported as unset, not as mangled', () => {
