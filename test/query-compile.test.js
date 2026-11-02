@@ -114,9 +114,15 @@ test('every filter operator emits one where clause with an escaped literal', () 
     ]
   });
 
-  assertLine(text, "| where SourceApp == @'eagle-public'");
-  assertLine(text, "| where EventName in (@'page_view', @'doc_download')");
-  assertLine(text, "| where Page contains @'/projects'");
+  // Full text: a where after summarize would filter on columns summarize already dropped.
+  assert.strictEqual(text, [
+    'EagleEvents_CL',
+    "| where SourceApp == @'eagle-public'",
+    "| where EventName in (@'page_view', @'doc_download')",
+    "| where Page contains @'/projects'",
+    '| summarize value = count()',
+    '| limit 1000'
+  ].join('\n'));
 });
 
 test('an unbinned breakdown is ordered biggest first, so limit means the top N', () => {

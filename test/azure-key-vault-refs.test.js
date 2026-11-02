@@ -180,7 +180,13 @@ test('prod names the vault\'s resource group, test keeps the deployment\'s own',
 
 // The other environment's vault fails the deploy at the vault grant; catch it before a deploy.
 for (const environment of ['test', 'prod']) {
-  test(`${environment} reads its own environment's vault`, { skip: noAzureCli }, () => {
-    assert.strictEqual(resolveParams(`main.${environment}.bicepparam`, PARAM_ENV).keyVaultName.value, `demi-kv-${environment}`);
+  test(`${environment} reads its own environment's vault, over its own subnet`, { skip: noAzureCli }, () => {
+    const params = resolveParams(`main.${environment}.bicepparam`, PARAM_ENV);
+
+    assert.strictEqual(params.keyVaultName.value, `demi-kv-${environment}`);
+    assert.match(
+      params.vnetSubnetId.value,
+      new RegExp(`/resourceGroups/c4b0a8-${environment}-networking/.*/subnets/snet-demi-func-fc1-${environment}$`)
+    );
   });
 }
