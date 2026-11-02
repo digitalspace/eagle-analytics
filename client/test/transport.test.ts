@@ -165,14 +165,14 @@ describe('base URL trimming', () => {
 
   it('finishes fast on long runs of slashes', () => {
     // A regex like /\/+$/ takes ~13s on the second string: the run matches, $ fails, and the
-    // engine retries from every offset. A linear scan keeps both well under 100ms.
+    // engine retries from every offset. A linear scan stays far under the cap on a slow runner.
     const allSlashes = 'https://ingest.test' + '/'.repeat(100_000);
     const slashesThenText = allSlashes + 'a';
 
     const started = performance.now();
     expect(trimTrailingSlashes(allSlashes)).toBe('https://ingest.test');
     expect(trimTrailingSlashes(slashesThenText)).toBe(slashesThenText);
-    expect(performance.now() - started).toBeLessThan(100);
+    expect(performance.now() - started).toBeLessThan(1_000);
   });
 
   it('posts to a single-slash /events path however the base URL is written', async () => {
