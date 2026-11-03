@@ -18,7 +18,9 @@ ROOT_EXCLUDE_DIRS = {
 
 # `.git` is in here as well as in the directory set: in a git worktree it is a FILE pointing at the
 # real repository, and directory pruning does not see it.
-ROOT_EXCLUDE_FILES = {".git", ".gitignore", ".yarnrc.yml", "eslint.config.js", "yarn.lock"}
+ROOT_EXCLUDE_FILES = {
+    ".git", ".gitignore", ".yarnrc.yml", "eslint.config.js", "local.settings.example.json", "yarn.lock",
+}
 
 # Operator files that can hold credentials; they must never reach the app.
 EXCLUDED_NAMES = {"local.settings.json", ".npmrc"}

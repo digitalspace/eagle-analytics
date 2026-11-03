@@ -65,6 +65,7 @@ Yarn 4 through Corepack; do not use npm.
 ```bash
 corepack enable
 yarn install
+cp local.settings.example.json local.settings.json
 yarn start          # func start, serves http://localhost:7071
 curl http://localhost:7071/health
 ```
@@ -75,8 +76,13 @@ Lint and test:
 yarn check          # yarn lint && yarn test
 ```
 
-Local settings go in `local.settings.json` (git-ignored). With no DCR endpoint set, events are
-discarded and a warning is logged, so the app runs offline.
+`local.settings.json` is git-ignored. The example exists for `FUNCTIONS_WORKER_RUNTIME`, which
+`func start` needs; `ENVIRONMENT=dev` is the default, listed so the value is explicit. With no DCR
+endpoint set, ingest logs a warning and drops events.
+
+`/query` and `/dashboards` answer `401` until `KEYCLOAK_URL` is set. After that they need Azure AD
+access to Log Analytics and Table storage. `/query` also answers `503` without
+`ANALYTICS_WORKSPACE_CUSTOMER_ID`.
 
 ## Environment variables
 
