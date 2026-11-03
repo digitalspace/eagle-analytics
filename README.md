@@ -65,6 +65,7 @@ Yarn 4 through Corepack; do not use npm.
 ```bash
 corepack enable
 yarn install
+cp local.settings.example.json local.settings.json
 yarn start          # func start, serves http://localhost:7071
 curl http://localhost:7071/health
 ```
@@ -75,8 +76,10 @@ Lint and test:
 yarn check          # yarn lint && yarn test
 ```
 
-Local settings go in `local.settings.json` (git-ignored). With no DCR endpoint set, events are
-discarded and a warning is logged, so the app runs offline.
+`local.settings.json` is git-ignored. The example sets `ENVIRONMENT=dev`, so the app starts without
+the shared header values. With no DCR endpoint set, ingest logs a warning and drops events.
+
+`/query` and `/dashboards` fail locally: they need Azure AD access to Log Analytics and Table storage.
 
 ## Environment variables
 
