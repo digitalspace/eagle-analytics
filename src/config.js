@@ -39,6 +39,11 @@ function secretFromEnv(name) {
 const apimSharedHeaderValue = secretFromEnv('APIM_SHARED_HEADER_VALUE');
 const auditSharedHeaderValue = secretFromEnv('AUDIT_SHARED_HEADER_VALUE');
 
+// Versionless secret URIs read at run time, so a rotated value is accepted without a redeploy. Empty
+// turns the read off; `<uri>-standby` is read beside each.
+const apimSharedHeaderSecretUri = (process.env.APIM_SHARED_HEADER_SECRET_URI || '').trim();
+const auditSharedHeaderSecretUri = (process.env.AUDIT_SHARED_HEADER_SECRET_URI || '').trim();
+
 // A missing header value would serve ingest to the internet and look healthy; a missing client list
 // or workspace reads as a dashboard bug. Fail the load instead.
 if (environmentName !== 'dev') {
@@ -63,6 +68,16 @@ if (environmentName !== 'dev') {
   const url = process.env.KEYCLOAK_URL || '';
   if (url && !url.startsWith('https://')) {
     throw new Error(`KEYCLOAK_URL must be https when ENVIRONMENT is '${environmentName}'.`);
+  }
+
+  // The vault read sends a managed identity bearer token to this URI.
+  for (const [name, uri] of [
+    ['APIM_SHARED_HEADER_SECRET_URI', apimSharedHeaderSecretUri],
+    ['AUDIT_SHARED_HEADER_SECRET_URI', auditSharedHeaderSecretUri]
+  ]) {
+    if (uri && !uri.startsWith('https://')) {
+      throw new Error(`${name} must be https when ENVIRONMENT is '${environmentName}'.`);
+    }
   }
 }
 
@@ -89,6 +104,8 @@ module.exports = {
   apimSharedHeaderValue,
   // A second header, so a producer knowing only the gateway value cannot write the audit trail.
   auditSharedHeaderValue,
+  apimSharedHeaderSecretUri,
+  auditSharedHeaderSecretUri,
   guardsDisabled: !apimSharedHeaderValue,
 
   // Only when it matches is X-Azure-SocketIP the address Front Door saw.

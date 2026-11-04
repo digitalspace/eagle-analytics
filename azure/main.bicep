@@ -48,6 +48,9 @@ param keyVaultResourceGroup string = resourceGroup().name
 @description('Existing subnet delegated to Microsoft.App/environments that the Function App integrates with. Required: the vault holding both header values only answers from inside the VNet.')
 param vnetSubnetId string
 
+@description('DNS server the Function App resolves names with: the landing zone resolver, which answers the vault\'s privatelink name.')
+param dnsServer string = '10.53.244.4'
+
 @description('Origins POST /events accepts a browser request from. A request with no Origin header is a server-side producer and is allowed; empty refuses every browser Origin.')
 param allowedOrigins array = []
 
@@ -180,6 +183,7 @@ module apiFunctionFlex './modules/api-function-flex.bicep' = {
     apimSharedHeaderName: apimSharedHeaderName
     apimSharedHeaderSecretUri: apimSharedHeaderSecretUri
     auditSharedHeaderSecretUri: auditSharedHeaderSecretUri
+    dnsServer: dnsServer
     allowedOrigins: allowedOrigins
     frontDoorId: frontDoorId
     trustedProxyIps: trustedProxyIps

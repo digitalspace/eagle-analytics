@@ -55,6 +55,16 @@ test('an https Keycloak URL loads', () => {
   }));
 });
 
+// The guards send a managed identity token for the vault to this URI on every refresh.
+for (const setting of ['APIM_SHARED_HEADER_SECRET_URI', 'AUDIT_SHARED_HEADER_SECRET_URI']) {
+  test(`a plain http ${setting} fails the load outside dev`, () => {
+    assert.throws(
+      () => loadConfig({ ENVIRONMENT: 'test', [setting]: 'http://demi-kv-test.vault.azure.net/secrets/x' }),
+      new RegExp(`${setting} must be https`)
+    );
+  });
+}
+
 // Where a developer runs Keycloak themselves, http is the only thing on offer.
 test('a local http Keycloak URL is still allowed in dev', () => {
   assert.doesNotThrow(() => loadConfig({

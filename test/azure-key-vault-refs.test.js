@@ -71,6 +71,11 @@ for (const { header, setting, uri, name } of HEADER_SECRETS) {
     assert.ok(value.includes(`parameters('${uri}')`), value);
   });
 
+  // The guards read this URI and its -standby at run time; the reference above alone cannot see a rotation.
+  test(`the ${header} secret URI also reaches the app as a plain setting`, { skip: noAzureCli }, () => {
+    assert.strictEqual(appSetting(setting.replace('_VALUE', '_SECRET_URI')).value, `[parameters('${uri}')]`);
+  });
+
   // A URI with a version pinned would freeze the app on the value that was current at deploy time, so
   // rotating the secret in the vault would change nothing until the next deployment.
   test(`the ${header} secret URI is versionless and names its own secret`, { skip: noAzureCli }, () => {
@@ -108,6 +113,14 @@ test('the app integrates with the subnet its vault answers on', { skip: noAzureC
 
   assert.strictEqual(site.properties.virtualNetworkSubnetId, "[parameters('virtualNetworkSubnetId')]");
   assert.strictEqual(module.properties.parameters.virtualNetworkSubnetId.value, "[parameters('vnetSubnetId')]");
+});
+
+// Azure's default resolver answers the vault's privatelink name with its public address, which the
+// vault refuses, so the run-time reads would fail while the references still resolve.
+test('the app resolves names with the landing zone resolver', { skip: noAzureCli }, () => {
+  assert.strictEqual(appSetting('WEBSITE_DNS_SERVER').value, "[parameters('dnsServer')]");
+  assert.strictEqual(moduleNamed('deploy-api-function-flex').properties.parameters.dnsServer.value, "[parameters('dnsServer')]");
+  assert.strictEqual(template.parameters.dnsServer.defaultValue, '10.53.244.4');
 });
 
 // A default would let a deployment that forgot the subnet succeed and come up unable to read either
