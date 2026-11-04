@@ -34,18 +34,16 @@ const VAULT_ENV = {
   AUDIT_SHARED_HEADER_SECRET_URI: AUDIT_URI
 };
 
-/**
- * Stands in for Key Vault: `secrets` maps a versionless secret URI to its latest value, a missing
- * entry answers 404, and `down: true` answers 503 for everything.
- */
+// Key Vault: `secrets` maps a versionless URI to its latest value, missing = 404, `failing` URIs and
+// `down: true` answer 503.
 function fakeVault(t, secrets) {
-  const vault = { secrets, down: false, pending: false };
+  const vault = { secrets, failing: [], down: false, pending: false };
   rotatingSecret._setTokenProvider(async () => TOKEN);
   t.mock.method(globalThis, 'fetch', async (url, init) => {
     if (vault.pending) return new Promise(() => {});
     const { pathname, origin, searchParams } = new URL(url);
     const status = (code) => ({ ok: code < 300, status: code, json: async () => ({}) });
-    if (vault.down) return status(503);
+    if (vault.down || vault.failing.includes(`${origin}${pathname}`)) return status(503);
     if (init.headers.authorization !== `Bearer ${TOKEN}` || searchParams.get('api-version') !== '7.4') return status(401);
     const value = vault.secrets[`${origin}${pathname}`];
     if (value === undefined) return status(404);
@@ -154,7 +152,7 @@ test('a value rotated in the vault passes once the 5 minute cache runs out', asy
 
   vault.secrets[GATEWAY_URI] = NEW_VALUE;
   t.mock.timers.tick(5 * 60 * 1000);
-  await assert.rejects(guard(request({ 'x-analytics-gateway': NEW_VALUE })), { status: 401 });
+  await guard(request({ 'x-analytics-gateway': VALUE }));
   await settle();
 
   await assert.doesNotReject(guard(request({ 'x-analytics-gateway': NEW_VALUE })));
@@ -178,6 +176,22 @@ test('a failed refresh keeps the values last read, and logs no value', async (t)
   await assert.rejects(guard(request({ 'x-analytics-gateway': VALUE })), { status: 401 });
   assert.match(warnings.join('\n'), /Key Vault read failed, keeping the values last read/);
   assert.doesNotMatch(warnings.join('\n'), new RegExp([VALUE, NEW_VALUE, STANDBY_VALUE, TOKEN].join('|')));
+});
+
+// The rotator rewrites the standby on its own; a failed read of it alone must not drop the value.
+test('a refresh whose standby read fails keeps the standby value', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-04T12:00:00Z') });
+  t.mock.method(logger, 'warn', () => {});
+  const vault = fakeVault(t, { [GATEWAY_URI]: NEW_VALUE, [`${GATEWAY_URI}-standby`]: STANDBY_VALUE });
+  const guard = loadGuard(VAULT_ENV);
+  await guard(request({ 'x-analytics-gateway': NEW_VALUE }));
+
+  vault.failing.push(`${GATEWAY_URI}-standby`);
+  t.mock.timers.tick(5 * 60 * 1000);
+  await guard(request({ 'x-analytics-gateway': NEW_VALUE }));
+  await settle();
+
+  await assert.doesNotReject(guard(request({ 'x-analytics-gateway': STANDBY_VALUE })));
 });
 
 test('a vault that does not answer holds the first request for 3 s at most', async (t) => {

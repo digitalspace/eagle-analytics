@@ -168,9 +168,15 @@ The vault has public network access disabled, and App Service resolves a referen
 
 The same two values back the `analytics-shared-header` and `analytics-audit-header` named values on `demi-apim-<env>`. Both sides must read the same value, or APIM's forwarded requests are refused.
 
-The guards also read each secret at run time from `APIM_SHARED_HEADER_SECRET_URI` and `AUDIT_SHARED_HEADER_SECRET_URI`, together with a `<name>-standby` secret beside it. A request passes when its header matches the latest version of either one. The values are cached for 5 minutes. Once a read has succeeded, the app setting value is no longer accepted, so a value removed from both secrets stops working within 5 minutes. If a later read fails, the app keeps the values it last read and logs a warning. If no read has worked since the app started, it accepts the app setting value. `WEBSITE_DNS_SERVER` points at the landing zone resolver so that the vault's private name resolves.
+The guards also read each secret at run time from `APIM_SHARED_HEADER_SECRET_URI` and `AUDIT_SHARED_HEADER_SECRET_URI`, together with a `<name>-standby` secret beside it. A request passes when its header matches the latest version of either one. The values are cached for 5 minutes, and a refresh starts only when a request arrives. Once a read has succeeded, the app setting value is no longer accepted. A value stops working within 5 minutes, once traffic arrives, after a new version replaces it in both secrets. Disabling a secret does not retire its value: the read answers 403, which counts as a failed read. If a read fails, the app keeps the values it last read and logs a warning. If no read has worked since the app started, it accepts the app setting value. `WEBSITE_DNS_SERVER` (param `dnsServer`) points at the landing zone resolver so that the vault's private name resolves.
 
-To rotate with no outage, put the new value in `<name>-standby`, wait at least 5 minutes, then make it the latest `<name>`. APIM picks it up within 4 hours. Keep the old value in `<name>-standby` until then. No restart is needed.
+The eagle-demi secret rotator Function, `demi-secret-rotator-<env>`, rotates both values on its own. The steps below are for break-glass use only. O is the old value and N the new one.
+
+1. Set `<name>-standby` to N. The app accepts O and N.
+2. After at least 30 minutes, set `<name>-standby` to O, then set `<name>` to N. The app still accepts O and N, and APIM starts stamping N.
+3. After APIM's 4 hour named value refresh, set `<name>-standby` to N. The app now accepts only N.
+
+No restart is needed.
 
 The operator also needs read on `demi-audit-<env>`, whose customer id the template reads at deploy time. In production that workspace lives in `rg-demi-prod`, and a resource-group deployment cannot assign a role outside its own group. Grant Log Analytics Reader on it to the analytics identity by hand, once:
 

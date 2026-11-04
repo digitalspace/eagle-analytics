@@ -66,6 +66,9 @@ param apimSharedHeaderSecretUri string
 @description('Versionless Key Vault secret URI holding the value of the X-Analytics-Audit header the keyed analytics-machine product stamps, guarding POST /audit on its own.')
 param auditSharedHeaderSecretUri string
 
+@description('DNS server the app resolves names with. Must answer the vault\'s privatelink name with its private address.')
+param dnsServer string = '10.53.244.4'
+
 @description('Origins POST /events accepts a browser request from, as a list. A request with no Origin header is a server-side producer and is allowed; empty refuses every browser Origin.')
 param allowedOrigins array = []
 
@@ -347,7 +350,7 @@ resource apiFunctionApp 'Microsoft.Web/sites@2023-12-01' = {
         // The landing zone's resolver; Azure's default resolves the vault's privatelink name public.
         {
           name: 'WEBSITE_DNS_SERVER'
-          value: '10.53.244.4'
+          value: dnsServer
         }
         {
           name: 'ALLOWED_ORIGINS'

@@ -115,14 +115,16 @@ test('the app integrates with the subnet its vault answers on', { skip: noAzureC
   assert.strictEqual(module.properties.parameters.virtualNetworkSubnetId.value, "[parameters('vnetSubnetId')]");
 });
 
-// A default would let a deployment that forgot the subnet succeed and come up unable to read either
-// header, which is the failure this whole arrangement exists to avoid.
 // Azure's default resolver answers the vault's privatelink name with its public address, which the
 // vault refuses, so the run-time reads would fail while the references still resolve.
 test('the app resolves names with the landing zone resolver', { skip: noAzureCli }, () => {
-  assert.strictEqual(appSetting('WEBSITE_DNS_SERVER').value, '10.53.244.4');
+  assert.strictEqual(appSetting('WEBSITE_DNS_SERVER').value, "[parameters('dnsServer')]");
+  assert.strictEqual(moduleNamed('deploy-api-function-flex').properties.parameters.dnsServer.value, "[parameters('dnsServer')]");
+  assert.strictEqual(template.parameters.dnsServer.defaultValue, '10.53.244.4');
 });
 
+// A default would let a deployment that forgot the subnet succeed and come up unable to read either
+// header, which is the failure this whole arrangement exists to avoid.
 test('the subnet is required, not defaulted', { skip: noAzureCli }, () => {
   assert.ok(!('defaultValue' in template.parameters.vnetSubnetId), 'vnetSubnetId has a default');
 });

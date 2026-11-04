@@ -14,7 +14,7 @@ async function managedIdentityToken() {
     const { DefaultAzureCredential } = require('@azure/identity');
     credential = new DefaultAzureCredential();
   }
-  return (await credential.getToken(VAULT_SCOPE)).token;
+  return (await credential.getToken(VAULT_SCOPE, { abortSignal: AbortSignal.timeout(READ_TIMEOUT_MS) })).token;
 }
 
 let getToken = managedIdentityToken;
@@ -58,7 +58,7 @@ function createRotatingSecrets(sources) {
       loaded.set(name, standby ? [current, standby] : [current]);
     } catch (err) {
       const keeping = loaded.has(name) ? 'keeping the values last read' : 'accepting the app setting value';
-      logger.warn(`[rotating-secret] ${name}: Key Vault read failed, ${keeping}: ${err.message}`);
+      logger.warn(`[rotating-secret] ${name}: Key Vault read failed, ${keeping}: ${err?.message ?? String(err)}`);
     }
   }
 
@@ -75,7 +75,7 @@ function createRotatingSecrets(sources) {
     if (!firstReady) {
       firstReady = within(refresh().then(() => { firstSettled = true; }), READY_CAP_MS);
     } else if (!refreshing && Date.now() - refreshedAt >= TTL_MS) {
-      refresh();
+      refresh().catch(() => {});
     }
     return firstSettled ? Promise.resolve() : firstReady;
   }
