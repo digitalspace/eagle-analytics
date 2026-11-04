@@ -14,4 +14,11 @@ function safeEqual(presented, expected) {
   );
 }
 
-module.exports = { safeEqual };
+// Every entry is compared, so the time taken does not say which one matched.
+function safeEqualAny(presented, expectedList) {
+  let matched = false;
+  for (const expected of expectedList) matched = safeEqual(presented, expected) || matched;
+  return matched;
+}
+
+module.exports = { safeEqual, safeEqualAny };

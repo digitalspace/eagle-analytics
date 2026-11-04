@@ -334,6 +334,21 @@ resource apiFunctionApp 'Microsoft.Web/sites@2023-12-01' = {
           name: 'AUDIT_SHARED_HEADER_VALUE'
           value: '@Microsoft.KeyVault(SecretUri=${auditSharedHeaderSecretUri})'
         }
+        // Read again by src/auth/rotating-secret.js with the -standby beside it, so a rotation needs no
+        // redeploy; the references above serve only until that first read succeeds.
+        {
+          name: 'APIM_SHARED_HEADER_SECRET_URI'
+          value: apimSharedHeaderSecretUri
+        }
+        {
+          name: 'AUDIT_SHARED_HEADER_SECRET_URI'
+          value: auditSharedHeaderSecretUri
+        }
+        // The landing zone's resolver; Azure's default resolves the vault's privatelink name public.
+        {
+          name: 'WEBSITE_DNS_SERVER'
+          value: '10.53.244.4'
+        }
         {
           name: 'ALLOWED_ORIGINS'
           value: join(allowedOrigins, ',')
