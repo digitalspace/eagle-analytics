@@ -36,11 +36,12 @@ const VAULT_ENV = {
 
 // Key Vault: `secrets` maps a versionless URI to its latest value, missing = 404, `failing` URIs and
 // `down: true` answer 503. `slow` URIs read their value a turn late; `afterRead(uri)` runs after each read.
+// Every request waits on `hold` first, so a never-settling promise is a vault that does not answer.
 function fakeVault(t, secrets) {
-  const vault = { secrets, failing: [], slow: [], afterRead: () => {}, down: false, pending: false };
+  const vault = { secrets, failing: [], slow: [], afterRead: () => {}, down: false, hold: null };
   rotatingSecret._setTokenProvider(async () => TOKEN);
   t.mock.method(globalThis, 'fetch', async (url, init) => {
-    if (vault.pending) return new Promise(() => {});
+    await vault.hold;
     const { pathname, origin, searchParams } = new URL(url);
     const status = (code) => ({ ok: code < 300, status: code, json: async () => ({}) });
     if (vault.down || vault.failing.includes(`${origin}${pathname}`)) return status(503);
@@ -255,6 +256,31 @@ test('a value the vault retired stops passing 10 minutes after that read, even w
   await assert.rejects(guard(request({ 'x-analytics-gateway': VALUE })), { status: 401 });
 });
 
+// An interval tick that lands while a retry is still reading joins that read. A second read would take
+// the previous slot, so the one read inside promote's gap that follows would drop N.
+test('an interval tick during a retry read counts as one read, so a gap read after it keeps N', async (t) => {
+  startClock(t);
+  t.mock.method(logger, 'warn', () => {});
+  const vault = fakeVault(t, { [GATEWAY_URI]: VALUE, [`${GATEWAY_URI}-standby`]: NEW_VALUE, [AUDIT_URI]: AUDIT_VALUE });
+  vault.down = true;
+  const guard = loadGuard(VAULT_ENV);
+  await guard(request({ 'x-analytics-gateway': VALUE }));
+
+  vault.down = false;
+  let release;
+  vault.hold = new Promise((resolve) => { release = resolve; });
+  await idle(t, 30 * 1000);
+  await idle(t, TTL_MS - 30 * 1000);
+  vault.afterRead = (uri) => {
+    if (uri === `${GATEWAY_URI}-standby`) vault.secrets[uri] = VALUE;
+  };
+  release();
+  await settle();
+  await idle(t);
+
+  await assert.doesNotReject(guard(request({ 'x-analytics-gateway': NEW_VALUE })));
+});
+
 // The rotator rewrites the standby on its own; a failed read of it alone must not drop the value.
 test('a refresh whose standby read fails keeps the standby value', async (t) => {
   startClock(t);
@@ -310,7 +336,7 @@ test('a token request that never answers fails that refresh, and the next one st
 
 test('a vault that does not answer holds the first request for 3 s at most', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
-  fakeVault(t, {}).pending = true;
+  fakeVault(t, {}).hold = new Promise(() => {});
   const guard = loadGuard(VAULT_ENV);
 
   const outcome = guard(request({ 'x-analytics-gateway': VALUE }));

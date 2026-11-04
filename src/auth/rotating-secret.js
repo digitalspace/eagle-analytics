@@ -69,7 +69,8 @@ function createRotatingSecrets(sources) {
     }
   }
 
-  // Reads in flight are shared per source, so a retry of one source never stands in for a full refresh.
+  // One read per source at a time: overlapping reads would land as two generations and push the older
+  // read out early. Keyed per source, so a retry of one source never stands in for a full refresh.
   function readOnce(name, uri) {
     if (!reading.has(name)) reading.set(name, loadOne(name, uri).finally(() => reading.delete(name)));
     return reading.get(name);
