@@ -14,7 +14,7 @@ async function managedIdentityToken() {
     const { DefaultAzureCredential } = require('@azure/identity');
     credential = new DefaultAzureCredential();
   }
-  return (await credential.getToken(VAULT_SCOPE, { abortSignal: AbortSignal.timeout(READ_TIMEOUT_MS) })).token;
+  return (await credential.getToken(VAULT_SCOPE)).token;
 }
 
 let getToken = managedIdentityToken;
@@ -31,17 +31,18 @@ async function readSecret(uri, token) {
   return typeof value === 'string' ? value.trim() : null;
 }
 
-function within(promise, ms) {
+/** Settles with `promise`, or after `ms`: resolved, or rejected with `timeoutError` when given. */
+function within(promise, ms, timeoutError) {
   let timer;
-  const cap = new Promise((resolve) => {
-    timer = setTimeout(resolve, ms);
+  const cap = new Promise((resolve, reject) => {
+    timer = setTimeout(() => (timeoutError ? reject(timeoutError) : resolve()), ms);
     timer.unref?.();
   });
   return Promise.race([promise, cap]).finally(() => clearTimeout(timer));
 }
 
-// After one good read of `<uri>` and `<uri>-standby` the fallback (app setting) is dropped, so a value
-// retired in the vault stops working within one TTL. `sources`: name -> { uri, fallback }.
+// The fallback (app setting) is dropped after one good read. The last two good reads are accepted, so a
+// read between promote's two writes keeps N; a retired value stops within 2 TTLs.
 function createRotatingSecrets(sources) {
   const vaultSources = Object.entries(sources).filter(([, source]) => source.uri);
   const loaded = new Map();
@@ -52,10 +53,15 @@ function createRotatingSecrets(sources) {
 
   async function loadOne(name, uri) {
     try {
-      const token = await getToken();
-      const [current, standby] = await Promise.all([readSecret(uri, token), readSecret(`${uri}-standby`, token)]);
+      // The managed identity path ignores an abort signal, and a hung token would pin `refreshing`.
+      const token = await within(getToken(), READ_TIMEOUT_MS, new Error('token request timed out'));
+      // The rotator writes standby before name, so reading name first never pairs a new name with
+      // a standby read before its write: that pair would drop the value APIM may still stamp.
+      const current = await readSecret(uri, token);
       if (!current) throw new Error(`${uri} answered 404`);
-      loaded.set(name, standby ? [current, standby] : [current]);
+      const standby = await readSecret(`${uri}-standby`, token);
+      const read = standby ? [current, standby] : [current];
+      loaded.set(name, { previous: loaded.get(name)?.current ?? [], current: read });
     } catch (err) {
       const keeping = loaded.has(name) ? 'keeping the values last read' : 'accepting the app setting value';
       logger.warn(`[rotating-secret] ${name}: Key Vault read failed, ${keeping}: ${err?.message ?? String(err)}`);
@@ -81,7 +87,8 @@ function createRotatingSecrets(sources) {
   }
 
   function acceptedValues(name) {
-    return loaded.get(name) ?? [sources[name].fallback];
+    const reads = loaded.get(name);
+    return reads ? [...new Set([...reads.current, ...reads.previous])] : [sources[name].fallback];
   }
 
   return { ready, acceptedValues };

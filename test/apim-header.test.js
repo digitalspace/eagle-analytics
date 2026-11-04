@@ -35,9 +35,9 @@ const VAULT_ENV = {
 };
 
 // Key Vault: `secrets` maps a versionless URI to its latest value, missing = 404, `failing` URIs and
-// `down: true` answer 503.
+// `down: true` answer 503. `slow` URIs read their value a turn late; `afterRead(uri)` runs after each read.
 function fakeVault(t, secrets) {
-  const vault = { secrets, failing: [], down: false, pending: false };
+  const vault = { secrets, failing: [], slow: [], afterRead: () => {}, down: false, pending: false };
   rotatingSecret._setTokenProvider(async () => TOKEN);
   t.mock.method(globalThis, 'fetch', async (url, init) => {
     if (vault.pending) return new Promise(() => {});
@@ -45,7 +45,10 @@ function fakeVault(t, secrets) {
     const status = (code) => ({ ok: code < 300, status: code, json: async () => ({}) });
     if (vault.down || vault.failing.includes(`${origin}${pathname}`)) return status(503);
     if (init.headers.authorization !== `Bearer ${TOKEN}` || searchParams.get('api-version') !== '7.4') return status(401);
-    const value = vault.secrets[`${origin}${pathname}`];
+    const uri = `${origin}${pathname}`;
+    if (vault.slow.includes(uri)) await settle();
+    const value = vault.secrets[uri];
+    vault.afterRead(uri);
     if (value === undefined) return status(404);
     return { ok: true, status: 200, json: async () => ({ value }) };
   });
@@ -128,12 +131,38 @@ test('standby value passes apimGuard and auditGuard', async (t) => {
   await assert.doesNotReject(auditGuard(request({ 'x-analytics-audit': AUDIT_STANDBY_VALUE })));
 });
 
-// Retiring a value in the vault has to revoke it, even though the app setting still holds it.
-test('after a vault read succeeds, the app setting value alone no longer passes', async (t) => {
-  fakeVault(t, { [GATEWAY_URI]: NEW_VALUE });
+// Retiring a value in the vault has to revoke it; one refresh late, so a read in promote's gap is harmless.
+test('a value retired in the vault stops passing after two refreshes', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-04T12:00:00Z') });
+  const vault = fakeVault(t, { [GATEWAY_URI]: NEW_VALUE, [`${GATEWAY_URI}-standby`]: VALUE, [AUDIT_URI]: AUDIT_VALUE });
   const guard = loadGuard(VAULT_ENV);
+  await guard(request({ 'x-analytics-gateway': VALUE }));
+
+  vault.secrets[`${GATEWAY_URI}-standby`] = NEW_VALUE;
+  t.mock.timers.tick(5 * 60 * 1000);
+  await guard(request({ 'x-analytics-gateway': VALUE }));
+  await settle();
+  t.mock.timers.tick(5 * 60 * 1000);
+  await guard(request({ 'x-analytics-gateway': NEW_VALUE }));
+  await settle();
 
   await assert.rejects(guard(request({ 'x-analytics-gateway': VALUE })), { status: 401 });
+});
+
+// Between promote's writes (standby := O, then name := N) the vault holds O twice, and a stamper
+// may switch to N before the next refresh.
+test('a refresh between the two promote writes keeps the new value accepted', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-04T12:00:00Z') });
+  const vault = fakeVault(t, { [GATEWAY_URI]: VALUE, [`${GATEWAY_URI}-standby`]: NEW_VALUE, [AUDIT_URI]: AUDIT_VALUE });
+  const guard = loadGuard(VAULT_ENV);
+  await guard(request({ 'x-analytics-gateway': VALUE }));
+
+  vault.secrets[`${GATEWAY_URI}-standby`] = VALUE;
+  t.mock.timers.tick(5 * 60 * 1000);
+  await guard(request({ 'x-analytics-gateway': VALUE }));
+  await settle();
+
+  await assert.doesNotReject(guard(request({ 'x-analytics-gateway': NEW_VALUE })));
 });
 
 test('when the vault cannot be read at boot, the app setting value still passes', async (t) => {
@@ -181,8 +210,12 @@ test('a failed refresh keeps the values last read, and logs no value', async (t)
 // The rotator rewrites the standby on its own; a failed read of it alone must not drop the value.
 test('a refresh whose standby read fails keeps the standby value', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-04T12:00:00Z') });
-  t.mock.method(logger, 'warn', () => {});
-  const vault = fakeVault(t, { [GATEWAY_URI]: NEW_VALUE, [`${GATEWAY_URI}-standby`]: STANDBY_VALUE });
+  const warn = t.mock.method(logger, 'warn', () => {});
+  const vault = fakeVault(t, {
+    [GATEWAY_URI]: NEW_VALUE,
+    [`${GATEWAY_URI}-standby`]: STANDBY_VALUE,
+    [AUDIT_URI]: AUDIT_VALUE
+  });
   const guard = loadGuard(VAULT_ENV);
   await guard(request({ 'x-analytics-gateway': NEW_VALUE }));
 
@@ -192,6 +225,43 @@ test('a refresh whose standby read fails keeps the standby value', async (t) => 
   await settle();
 
   await assert.doesNotReject(guard(request({ 'x-analytics-gateway': STANDBY_VALUE })));
+  assert.strictEqual(warn.mock.callCount(), 1);
+});
+
+// Promote writes standby := O, then name := N. A read of standby before that pair and of name after
+// it would see N twice and drop O, which APIM may still stamp for 4 h.
+test('a read that straddles a promote keeps the old value accepted', async (t) => {
+  const vault = fakeVault(t, { [GATEWAY_URI]: VALUE, [`${GATEWAY_URI}-standby`]: NEW_VALUE });
+  vault.slow.push(GATEWAY_URI);
+  vault.afterRead = (uri) => {
+    if (uri !== `${GATEWAY_URI}-standby`) return;
+    vault.secrets[`${GATEWAY_URI}-standby`] = VALUE;
+    vault.secrets[GATEWAY_URI] = NEW_VALUE;
+  };
+  const guard = loadGuard(VAULT_ENV);
+
+  await assert.doesNotReject(guard(request({ 'x-analytics-gateway': VALUE })));
+});
+
+test('a token request that never answers fails that refresh, and the next one still runs', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: new Date('2026-11-04T12:00:00Z') });
+  const warnings = [];
+  t.mock.method(logger, 'warn', (message) => warnings.push(message));
+  fakeVault(t, { [GATEWAY_URI]: NEW_VALUE });
+  let tokenCalls = 0;
+  rotatingSecret._setTokenProvider(() => (tokenCalls++ === 0 ? new Promise(() => {}) : Promise.resolve(TOKEN)));
+  const guard = loadGuard(VAULT_ENV);
+
+  const first = guard(request({ 'x-analytics-gateway': VALUE }));
+  t.mock.timers.tick(10000);
+  await first;
+  await settle();
+  t.mock.timers.tick(5 * 60 * 1000);
+  await guard(request({ 'x-analytics-gateway': VALUE }));
+  await settle();
+
+  assert.match(warnings.join('\n'), /token request timed out/);
+  await assert.doesNotReject(guard(request({ 'x-analytics-gateway': NEW_VALUE })));
 });
 
 test('a vault that does not answer holds the first request for 3 s at most', async (t) => {
