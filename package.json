@@ -14,7 +14,7 @@
     "check": "yarn lint && yarn test"
   },
   "engines": {
-    "node": ">=22 <23"
+    "node": ">=24.15.0 <25.0.0"
   },
   "dependencies": {
     "@azure/data-tables": "^13.3.1",

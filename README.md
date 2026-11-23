@@ -1,6 +1,6 @@
 # eagle-analytics
 
-Product analytics for EPIC. An Azure Functions app (Node 22, Flex Consumption) that:
+Product analytics for EPIC. An Azure Functions app (Node 24, Flex Consumption) that:
 
 - takes batched events from eagle-public, eagle-admin, eagle-api and eagle-demi,
 - writes them into custom tables in a Log Analytics workspace through a Direct data collection rule,
@@ -59,7 +59,7 @@ body, and the time range never reaches the query text at all.
 
 ## Run it locally
 
-Needs Node 22 and [Azure Functions Core Tools v4](https://learn.microsoft.com/azure/azure-functions/functions-run-local).
+Needs Node 24 and [Azure Functions Core Tools v4](https://learn.microsoft.com/azure/azure-functions/functions-run-local).
 Yarn 4 through Corepack; do not use npm.
 
 ```bash

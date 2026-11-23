@@ -50,11 +50,11 @@ jobs:
       - name: Enable Corepack
         run: corepack enable
 
-      # 22, the Flex host's runtime (azure/modules/api-function-flex.bicep).
+      # 24, the Flex host's runtime (azure/modules/api-function-flex.bicep).
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'yarn'
 
       # Dependencies only. Packaging belongs to `scripts/package-api.py`.
