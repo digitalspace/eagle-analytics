@@ -18,7 +18,7 @@ param appInsightsName = 'eagle-insights-test'
 
 param keycloakUrl = 'https://test.loginproxy.gov.bc.ca/auth'
 
-// eagle-demi-admin's client id (its public/env.js), the same one eagle-demi's allowedClients names.
+// The shared staff client, the same one eagle-demi's allowedClients names.
 param keycloakAllowedClients = 'eagle-admin-console'
 
 // From the environment: it gates trust in X-Azure-SocketIP, so knowing it lets a caller pick its address.
@@ -33,7 +33,6 @@ param trustedProxyIps = '142.34.194.121,142.34.194.122,142.34.194.123,142.34.194
 param allowedOrigins = [
   'https://eagle-public-test-dbg8ghh8gjd0bscx.a02.azurefd.net'
   'https://eagle-public-next-test-gtaqa6dvexc6edhg.a02.azurefd.net'
-  'https://demi-admin-test-hbf7cfh7ggfhf4gf.a02.azurefd.net'
   'https://eagle-test.apps.silver.devops.gov.bc.ca'
   'https://test.projects.eao.gov.bc.ca'
   'https://www.test.projects.eao.gov.bc.ca'

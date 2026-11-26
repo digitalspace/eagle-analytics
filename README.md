@@ -4,7 +4,8 @@ Product analytics for EPIC. An Azure Functions app (Node 24, Flex Consumption) t
 
 - takes batched events from eagle-public, eagle-admin, eagle-api and eagle-demi,
 - writes them into custom tables in a Log Analytics workspace through a Direct data collection rule,
-- answers metric queries for the dashboard screens in eagle-demi-admin,
+- answers metric queries for staff dashboards (the admin UI that showed them is retired; a future
+  app, EPIC.centre 2, will host it),
 - stores saved dashboards in Table Storage.
 
 ## Endpoints

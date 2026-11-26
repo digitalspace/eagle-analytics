@@ -9,7 +9,7 @@ const config = require('../config');
 const { httpError } = require('../http/http-error');
 const { logger } = require('../utils/logger');
 
-/** Mirrors eagle-demi-admin `src/api/keycloak.ts` STAFF_ROLES. Both lists gate the same screens. */
+/** Mirrors eagle-demi `frontend/src/api/keycloak.ts` STAFF_ROLES. Keep the two lists equal. */
 const STAFF_ROLES = ['sysadmin', 'staff', 'demi-admin'];
 
 const JWKS_TTL_MS = 10 * 60 * 1000;
